@@ -1,8 +1,8 @@
-package com.isometric.game;
+package net.arkaine;
 
-import com.isometric.game.controller.GameController;
-import com.isometric.game.model.GameModel;
-import com.isometric.game.view.GameView;
+import net.arkaine.controller.GameController;
+import net.arkaine.model.GameModel;
+import net.arkaine.view.GameView;
 import javafx.application.Application;
 import javafx.scene.Scene;
 import javafx.scene.layout.StackPane;

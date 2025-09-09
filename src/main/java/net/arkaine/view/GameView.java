@@ -1,6 +1,6 @@
-package com.isometric.game.view;
+package net.arkaine.view;
 
-import com.isometric.game.model.GameModel;
+import net.arkaine.model.GameModel;
 import javafx.geometry.Point2D;
 import javafx.scene.canvas.Canvas;
 import javafx.scene.canvas.GraphicsContext;

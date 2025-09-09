@@ -1,4 +1,4 @@
-package com.isometric.game;
+package net.arkaine;
 
 import javafx.application.Application;
 import javafx.scene.Scene;

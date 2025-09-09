@@ -1,6 +1,6 @@
-package com.isometric.game;
+package net.arkaine;
 
-import com.isometric.game.model.GameModel;
+import net.arkaine.model.GameModel;
 
 import java.util.HashSet;
 import java.util.List;

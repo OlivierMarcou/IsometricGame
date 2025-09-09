@@ -4,10 +4,10 @@ module catmeme {
     requires java.net.http;
     requires java.desktop;
 
-    exports com.isometric.game;
-    opens com.isometric.game to javafx.fxml;
-    exports com.isometric.game.model;
-    opens com.isometric.game.model to javafx.fxml;
-    exports com.isometric.game.inventory;
-    opens com.isometric.game.inventory to javafx.fxml;
+    exports net.arkaine;
+    opens net.arkaine to javafx.fxml;
+    exports net.arkaine.model;
+    opens net.arkaine.model to javafx.fxml;
+    exports net.arkaine.inventory;
+    opens net.arkaine.inventory to javafx.fxml;
 }

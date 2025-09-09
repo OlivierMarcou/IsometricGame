@@ -1,8 +1,8 @@
-package com.isometric.game.controller;
+package net.arkaine.controller;
 
-import com.isometric.game.inventory.InventorySystem;
-import com.isometric.game.model.GameModel;
-import com.isometric.game.view.GameView;
+import net.arkaine.inventory.InventorySystem;
+import net.arkaine.model.GameModel;
+import net.arkaine.view.GameView;
 import javafx.animation.KeyFrame;
 import javafx.animation.Timeline;
 import javafx.geometry.Point2D;

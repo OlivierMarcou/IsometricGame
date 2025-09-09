@@ -1,6 +1,6 @@
-package com.isometric.game.model;
+package net.arkaine.model;
 
-import com.isometric.game.inventory.InventorySystem;
+import net.arkaine.inventory.InventorySystem;
 import javafx.geometry.Point2D;
 import java.io.BufferedReader;
 import java.io.InputStream;

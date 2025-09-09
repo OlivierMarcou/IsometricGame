@@ -1,6 +1,6 @@
-package com.isometric.game.inventory;
+package net.arkaine.inventory;
 
-import com.isometric.game.model.GameModel;
+import net.arkaine.model.GameModel;
 import javafx.geometry.Pos;
 import javafx.scene.Scene;
 import javafx.scene.control.*;
