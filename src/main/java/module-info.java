@@ -10,4 +10,6 @@ module catmeme {
     opens net.arkaine.model to javafx.fxml;
     exports net.arkaine.inventory;
     opens net.arkaine.inventory to javafx.fxml;
+    exports net.arkaine.combat;
+    opens net.arkaine.combat to javafx.fxml;
 }

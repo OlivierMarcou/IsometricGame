@@ -1,11 +1,13 @@
 package net.arkaine.model;
 
-import net.arkaine.inventory.InventorySystem;
 import javafx.geometry.Point2D;
 import java.io.BufferedReader;
 import java.io.InputStream;
 import java.io.InputStreamReader;
 import java.util.*;
+
+import net.arkaine.combat.CombatSystem;
+import net.arkaine.inventory.InventorySystem;
 
 /**
  * Modèle du jeu - Contient toutes les données et la logique métier
@@ -24,10 +26,13 @@ public class GameModel {
 
     // État du joueur
     private Point2D playerPosition = new Point2D(MAP_SIZE / 2, MAP_SIZE / 2);
+
+    CombatSystem.Entity playerEntity = new CombatSystem.Player(playerPosition);
     private double playerAngle = 0;
     private Set<String> playerKeys = new HashSet<>();
     private InventorySystem inventory = new InventorySystem(); // Système d'inventaire
 
+    private CombatSystem combatSystem = new CombatSystem();
     // État du mouvement
     private List<Point2D> currentPath = new ArrayList<>();
     private Point2D targetPosition = null;
@@ -602,6 +607,99 @@ public class GameModel {
         itemMap[x][y].add(droppedItem);
 
         System.out.println("Objet jeté au sol: " + itemName + " (" + count + ")");
+    }
+
+    private void spawnInitialEnemies() {
+        // Quelques ennemis d'exemple dispersés sur la carte
+        Random rand = new Random();
+
+        // Spawner quelques meutes
+        for (int i = 0; i < 3; i++) {
+            Point2D packPos = new Point2D(
+                    10 + rand.nextInt(MAP_SIZE - 20),
+                    10 + rand.nextInt(MAP_SIZE - 20)
+            );
+
+            CombatSystem.EnemyClass packClass = rand.nextBoolean() ?
+                    CombatSystem.EnemyClass.WARRIOR : CombatSystem.EnemyClass.ARCHER;
+
+            combatSystem.spawnEnemyPack(this, packPos, packClass, 3 + rand.nextInt(3));
+        }
+
+        // Spawner quelques solitaires
+        for (int i = 0; i < 5; i++) {
+            Point2D soloPos = new Point2D(
+                    5 + rand.nextInt(MAP_SIZE - 10),
+                    5 + rand.nextInt(MAP_SIZE - 10)
+            );
+
+            CombatSystem.EnemyClass soloClass = CombatSystem.EnemyClass.values()[
+                    rand.nextInt(CombatSystem.EnemyClass.values().length - 1)]; // Pas de BOSS aléatoire
+
+            combatSystem.spawnSolitaryEnemy(soloPos, soloClass);
+        }
+
+        // Spawner quelques gardiens
+        for (int i = 0; i < 2; i++) {
+            Point2D guardPos = new Point2D(
+                    15 + rand.nextInt(MAP_SIZE - 30),
+                    15 + rand.nextInt(MAP_SIZE - 30)
+            );
+
+            CombatSystem.EnemyClass guardClass = rand.nextBoolean() ?
+                    CombatSystem.EnemyClass.ELITE_WARRIOR : CombatSystem.EnemyClass.ELITE_MAGE;
+
+            combatSystem.spawnGuardian(guardPos, guardClass);
+        }
+
+        System.out.println("Ennemis initiaux générés sur la carte");
+    }
+
+    public boolean updateCombat(double deltaTime) {
+        // Mettre à jour le système de combat
+        combatSystem.update(this, deltaTime);
+        // Vérifier si le joueur est mort
+        if (!playerEntity.stats.isAlive()) {
+            setMessageAbovePlayer("GAME OVER");
+            return false; // Jeu terminé
+        }
+
+        return true; // Jeu continue
+    }
+
+    public void playerAttack(Point2D targetPosition) {
+        // Le joueur attaque vers une position
+        if (!playerEntity.canAttack(System.currentTimeMillis() / 1000.0)) {
+            return;
+        }
+
+        // Trouver l'ennemi le plus proche de la position cible
+        CombatSystem.Entity target = null;
+        double minDistance = Double.MAX_VALUE;
+
+        for (CombatSystem.Entity entity : combatSystem.getEntities()) {
+            if (entity.isPlayer || !entity.stats.isAlive()) continue;
+
+            double distance = entity.position.distance(targetPosition);
+            if (distance < minDistance && distance <= playerEntity.stats.range) {
+                minDistance = distance;
+                target = entity;
+            }
+        }
+
+        if (target != null) {
+            // Attaque réussie
+            CombatSystem.DamageType damageType = CombatSystem.DamageType.PHYSICAL; // Par défaut
+            int damage = playerEntity.stats.damage + (int)(Math.random() * 10 - 5);
+            int finalDamage = target.takeDamage(damage, damageType);
+
+            setMessageAbovePlayer("Hit for " + finalDamage + "!");
+            playerEntity.lastAttackTime = System.currentTimeMillis() / 1000.0;
+
+            System.out.println("Joueur attaque " + target.entityClass + " pour " + finalDamage + " dégâts!");
+        } else {
+            setMessageAbovePlayer("Miss!");
+        }
     }
 
     public void startMovement(List<Point2D> path, Point2D target, Point2D clicked) {

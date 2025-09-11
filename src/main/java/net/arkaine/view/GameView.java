@@ -68,54 +68,31 @@ public class GameView {
         System.out.println("Chargement des images PNG...");
 
         // Charger les images de sol
-        int floorCount = 0;
         for (int i = 0; i < 50; i++) {
             Image image = loadImage("/sol/floor_" + i + ".png");
             if (image != null) {
                 floorImages.put("floor_" + i, image);
-                floorCount++;
             }
         }
 
         // Charger les images de murs
-        int wallCount = 0;
         for (int i = 0; i < 50; i++) {
             Image image = loadImage("/murs/wall_" + i + ".png");
             if (image != null) {
                 wallImages.put("wall_" + i, image);
-                wallCount++;
-            }
-
-            // Charger aussi les images de portes ouvertes
-            Image openImage = loadImage("/murs/wall_" + i + "_o.png");
-            if (openImage != null) {
-                wallImages.put("wall_" + i + "_o", openImage);
             }
         }
 
         // Charger les images de plafonds
-        int ceilingCount = 0;
         for (int i = 0; i < 30; i++) {
             Image image = loadImage("/plafonds/ceiling_" + i + ".png");
             if (image != null) {
                 ceilingImages.put("ceiling_" + i, image);
-                ceilingCount++;
             }
         }
 
-        System.out.println("Images chargées: " + floorCount + " sols, " +
-                wallCount + " murs, " + ceilingCount + " plafonds");
-
-        // Debug détaillé si peu d'images
-        if (floorCount < 10) {
-            System.out.println("⚠️ Peu d'images de sol trouvées. Vérifiez le dossier /sol/");
-        }
-        if (wallCount < 10) {
-            System.out.println("⚠️ Peu d'images de murs trouvées. Vérifiez le dossier /murs/");
-        }
-        if (ceilingCount < 5) {
-            System.out.println("⚠️ Peu d'images de plafonds trouvées. Vérifiez le dossier /plafonds/");
-        }
+        System.out.println("Images chargées: " + floorImages.size() + " sols, " +
+                wallImages.size() + " murs, " + ceilingImages.size() + " plafonds");
     }
 
     private Image loadImage(String path) {
@@ -180,17 +157,12 @@ public class GameView {
             return;
         }
 
-        // Debug pour une tuile spécifique (centre de la carte)
-        boolean isDebugTile = (x == GameModel.MAP_SIZE/2 && y == GameModel.MAP_SIZE/2);
-
         // Rendu du sol
         int floorIndex = model.getFloorMap()[x][y];
         if (floorIndex >= 0) {
             Image floorImg = floorImages.get("floor_" + floorIndex);
             if (floorImg != null) {
                 gc.drawImage(floorImg, screenX - TILE_WIDTH/2, screenY - TILE_HEIGHT/2);
-            } else if (isDebugTile) {
-                System.out.println("Image sol manquante: floor_" + floorIndex);
             }
         }
 
@@ -245,8 +217,6 @@ public class GameView {
                         renderHealthBar(screenX, screenY - WALL_HEIGHT + TILE_HEIGHT/2, props.health);
                     }
                 }
-            } else if (isDebugTile) {
-                System.out.println("Image mur manquante: " + wallImageKey);
             }
         }
 
@@ -258,8 +228,6 @@ public class GameView {
                 gc.setGlobalAlpha(alpha);
                 gc.drawImage(ceilingImg, screenX - TILE_WIDTH/2, screenY - TILE_HEIGHT/2 - WALL_HEIGHT);
                 gc.setGlobalAlpha(1.0);
-            } else if (isDebugTile) {
-                System.out.println("Image plafond manquante: ceiling_" + ceilingIndex);
             }
         }
     }
