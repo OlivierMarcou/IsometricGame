@@ -841,7 +841,7 @@ public class GameView {
     // ================================
 
     public Point2D screenToTile(double screenX, double screenY) {
-        // Convertir en coordonnées monde (avec la caméra)
+        // CORRECTION : Conversion écran vers monde avec caméra précise
         double worldX = screenX - CANVAS_WIDTH / 2 + cameraX;
         double worldY = screenY - CANVAS_HEIGHT / 2 + cameraY;
 
@@ -857,7 +857,7 @@ public class GameView {
         double worldX = (tileX - tileY) * (TILE_WIDTH / 2);
         double worldY = (tileX + tileY) * (TILE_HEIGHT / 2);
 
-        // Conversion monde vers coordonnées écran (avec la caméra)
+        // CORRECTION : Conversion monde vers coordonnées écran avec centrage précis
         double screenX = worldX - cameraX + CANVAS_WIDTH / 2;
         double screenY = worldY - cameraY + CANVAS_HEIGHT / 2;
 
@@ -870,10 +870,13 @@ public class GameView {
 
     public void centerCameraOnPlayer(GameModel model) {
         Point2D playerPos = model.getPlayerPosition();
-        Point2D playerScreenPos = tileToScreen(playerPos.getX(), playerPos.getY());
 
-        cameraX = playerScreenPos.getX() - CANVAS_WIDTH / 2;
-        cameraY = playerScreenPos.getY() - CANVAS_HEIGHT / 2;
+        // Calcul direct des coordonnées monde
+        double worldX = (playerPos.getX() - playerPos.getY()) * (TILE_WIDTH / 2);
+        double worldY = (playerPos.getX() + playerPos.getY()) * (TILE_HEIGHT / 2);
+
+        cameraX = worldX;
+        cameraY = worldY;
 
         System.out.println("Caméra centrée sur le personnage à la position (" +
                 (int)playerPos.getX() + ", " + (int)playerPos.getY() + ")");
@@ -881,16 +884,25 @@ public class GameView {
 
     public void updateCameraToFollowPlayer(GameModel model) {
         Point2D currentPos = model.getCurrentInterpolatedPosition();
-        Point2D playerScreenPos = tileToScreen(currentPos.getX(), currentPos.getY());
 
-        double targetCameraX = playerScreenPos.getX() - CANVAS_WIDTH / 2;
-        double targetCameraY = playerScreenPos.getY() - CANVAS_HEIGHT / 2;
+        // Calculer la position monde exacte du joueur
+        double targetWorldX = (currentPos.getX() - currentPos.getY()) * (TILE_WIDTH / 2);
+        double targetWorldY = (currentPos.getX() + currentPos.getY()) * (TILE_HEIGHT / 2);
 
-        // Mouvement fluide de caméra
-        cameraX += (targetCameraX - cameraX) * 0.05;
-        cameraY += (targetCameraY - cameraY) * 0.05;
+        // CORRECTION : Suivi plus réactif et précis
+        double lerpFactor = model.isMoving() ? 0.15 : 0.08; // Plus rapide en mouvement
+
+        cameraX += (targetWorldX - cameraX) * lerpFactor;
+        cameraY += (targetWorldY - cameraY) * lerpFactor;
     }
 
+    // MÉTHODE ALTERNATIVE : Caméra instantanée (pour debug)
+    public void snapCameraToPlayer(GameModel model) {
+        Point2D currentPos = model.getCurrentInterpolatedPosition();
+
+        cameraX = (currentPos.getX() - currentPos.getY()) * (TILE_WIDTH / 2);
+        cameraY = (currentPos.getX() + currentPos.getY()) * (TILE_HEIGHT / 2);
+    }
     // ================================
     // MÉTHODES UTILITAIRES PUBLIQUES
     // ================================

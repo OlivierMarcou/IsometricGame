@@ -86,10 +86,12 @@ public class GameController implements GameModel.GameModelListener {
             if (e.getButton() == MouseButton.PRIMARY) {
                 // Vérifier s'il y a un ennemi à cette position pour l'attaquer
                 if (isEnemyAtPosition(clickedTile)) {
-                    // Attaque
+                    // NOUVEAU : Arrêter le mouvement avant d'attaquer
+                    model.stopMovement();
                     model.playerAttack(clickedTile);
                 } else {
-                    // Déplacement normal
+                    // CORRECTION : Toujours permettre le déplacement
+                    // (plus de vérification de model.isMoving())
                     handleMovementRequest(clickedTile);
                 }
             } else if (e.getButton() == MouseButton.SECONDARY) {
@@ -107,8 +109,10 @@ public class GameController implements GameModel.GameModelListener {
     }
 
     private void handleMovementRequest(Point2D target) {
-        if (model.isMoving()) return;
+        // CORRECTION : Supprimer la vérification qui bloquait les nouveaux mouvements
+        // if (model.isMoving()) return; // ← Cette ligne est supprimée
 
+        // Toujours permettre un nouveau mouvement, même si un mouvement est en cours
         List<Point2D> path = findPath(model.getPlayerPosition(), target);
         model.startMovement(path, target, target);
     }

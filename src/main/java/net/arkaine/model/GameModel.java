@@ -890,11 +890,18 @@ public class GameModel {
     // ================================
     // GESTION DU MOUVEMENT
     // ================================
-
     public void startMovement(List<Point2D> path, Point2D target, Point2D clicked) {
         if (path.isEmpty()) {
             setShowExclamation(true);
             return;
+        }
+
+        // CORRECTION : Toujours accepter un nouveau mouvement
+        // Interrompre le mouvement actuel s'il y en a un
+        if (isMoving) {
+            // Mettre à jour la position actuelle du joueur à sa position interpolée
+            Point2D currentInterpolated = getCurrentInterpolatedPosition();
+            setPlayerPosition(currentInterpolated);
         }
 
         this.currentPath = new ArrayList<>(path);
@@ -906,11 +913,28 @@ public class GameModel {
 
         notifyMovementStarted(path);
     }
+    // NOUVELLE MÉTHODE : Arrêter le mouvement en cours
+    public void stopMovement() {
+        if (isMoving) {
+            // Fixer la position du joueur à sa position interpolée actuelle
+            Point2D currentInterpolated = getCurrentInterpolatedPosition();
+            setPlayerPosition(currentInterpolated);
+
+            // Arrêter le mouvement
+            isMoving = false;
+            currentPath.clear();
+            targetPosition = null;
+            clickedPosition = null;
+
+            notifyMovementFinished();
+        }
+    }
 
     public boolean updateMovement() {
         if (!isMoving || currentPath.isEmpty()) return false;
 
-        moveProgress += 0.05;
+        // CORRECTION : Vitesse de mouvement ajustée pour un suivi plus fluide
+        moveProgress += 0.08; // Augmenté de 0.05 à 0.08 pour un mouvement plus rapide
 
         if (moveProgress >= 1.0) {
             moveProgress = 0.0;
@@ -930,12 +954,15 @@ public class GameModel {
         return true;
     }
 
+
     public Point2D getCurrentInterpolatedPosition() {
         if (!isMoving || currentPathIndex >= currentPath.size()) {
             return playerPosition;
         }
 
         Point2D nextPos = currentPath.get(currentPathIndex);
+
+        // CORRECTION : Interpolation plus précise
         double interpX = playerPosition.getX() + (nextPos.getX() - playerPosition.getX()) * moveProgress;
         double interpY = playerPosition.getY() + (nextPos.getY() - playerPosition.getY()) * moveProgress;
 
