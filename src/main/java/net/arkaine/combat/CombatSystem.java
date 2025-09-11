@@ -71,6 +71,8 @@ public class CombatSystem {
         public boolean active;
         public Color color;
         public Entity source;
+        public double timeAlive;
+        public static final double MAX_LIFETIME = 10.0; // 10 secondes max
 
         public Projectile(Point2D start, Point2D target, DamageType damageType, int damage, double speed, Entity source) {
             this.position = start;
@@ -80,6 +82,7 @@ public class CombatSystem {
             this.speed = speed;
             this.active = true;
             this.source = source;
+            this.timeAlive = 0;
 
             // Calculer la vélocité
             double dx = target.getX() - start.getX();
@@ -102,10 +105,18 @@ public class CombatSystem {
             }
         }
 
-        public void update() {
+        public void update(double deltaTime) {
             if (!active) return;
 
-            position = position.add(velocity);
+            timeAlive += deltaTime;
+
+            // Détruire le projectile s'il est trop vieux
+            if (timeAlive > MAX_LIFETIME) {
+                active = false;
+                return;
+            }
+
+            position = position.add(velocity.multiply(deltaTime));
 
             // Vérifier si le projectile a atteint sa cible (distance approximative)
             double distanceToTarget = position.distance(target);
@@ -166,6 +177,7 @@ public class CombatSystem {
         private static Stats createPlayerStats() {
             Stats stats = new Stats(100, 25, 1.0, 1.5, 1.5);
             // Le joueur peut avoir des résistances via équipement
+            stats.setResistance(DamageType.PHYSICAL, 0.1); // 10% résistance physique de base
             return stats;
         }
 
@@ -185,6 +197,8 @@ public class CombatSystem {
         public double aggroRange;
         public double lastPathfindTime;
         public String packId; // Pour identifier les meutes
+        public double lastDamageTime; // Pour éviter le spam de dégâts
+        public double stateChangeTime; // Pour variations de comportement
 
         public Enemy(Point2D position, EnemyClass enemyClass, BehaviorType behavior) {
             super(position, createEnemyStats(enemyClass), enemyClass, false);
@@ -194,6 +208,8 @@ public class CombatSystem {
             this.path = new ArrayList<>();
             this.pathIndex = 0;
             this.lastPathfindTime = 0;
+            this.lastDamageTime = 0;
+            this.stateChangeTime = 0;
             this.packId = behavior == BehaviorType.PACK ? "pack_" + System.currentTimeMillis() : null;
         }
 
@@ -276,7 +292,10 @@ public class CombatSystem {
             // Gestion de l'aggro
             if (target == null && distanceToPlayer <= aggroRange) {
                 target = player;
-                System.out.println("Ennemi " + entityClass + " aggro le joueur!");
+                stateChangeTime = currentTime;
+                if (behavior == BehaviorType.PACK) {
+                    alertPackMembers(allEntities, player);
+                }
             }
 
             // Perdre l'aggro si trop loin (pour les gardiens)
@@ -284,31 +303,187 @@ public class CombatSystem {
                 double distanceFromHome = position.distance(homePosition);
                 if (distanceFromHome > aggroRange * 2) {
                     target = null;
-                    // Retourner à la position de garde
                     startPathfinding(model, homePosition, currentTime);
                 }
             }
 
+            // Comportement selon l'état
             if (target != null) {
-                // Comportement de combat
-                if (isInRange(target)) {
-                    // Attaquer
-                    if (canAttack(currentTime)) {
-                        attack(target, projectiles, currentTime);
-                    }
-                } else {
-                    // Se rapprocher
-                    if (canMove(currentTime) && (currentTime - lastPathfindTime > 0.5)) {
-                        startPathfinding(model, target.position, currentTime);
-                    }
-
-                    // Suivre le chemin
-                    followPath(currentTime);
-                }
+                handleCombatBehavior(model, projectiles, currentTime);
             } else {
-                // Patrouille ou repos
-                patrol(model, currentTime);
+                handleIdleBehavior(model, currentTime);
             }
+
+            // Mise à jour du pathfinding
+            followPath(currentTime);
+        }
+
+        private void handleCombatBehavior(GameModel model, List<Projectile> projectiles, double currentTime) {
+            if (isInRange(target)) {
+                // Attaquer
+                if (canAttack(currentTime)) {
+                    attack(target, projectiles, currentTime);
+                }
+
+                // Comportement spécial selon la classe
+                handleSpecialBehavior(model, currentTime);
+            } else {
+                // Se rapprocher
+                if (canMove(currentTime) && (currentTime - lastPathfindTime > 0.5)) {
+                    startPathfinding(model, target.position, currentTime);
+                }
+            }
+        }
+
+        private void handleIdleBehavior(GameModel model, double currentTime) {
+            switch (behavior) {
+                case GUARDIAN:
+                    // Retourner à la position de garde si trop loin
+                    double distanceFromHome = position.distance(homePosition);
+                    if (distanceFromHome > 2.0) {
+                        if (currentTime - lastPathfindTime > 1.0) {
+                            startPathfinding(model, homePosition, currentTime);
+                        }
+                    }
+                    break;
+
+                case SOLITARY:
+                    // Patrouille aléatoire
+                    if (currentTime - stateChangeTime > 5.0 && Math.random() < 0.3) {
+                        Point2D randomTarget = generateRandomPatrolPoint();
+                        if (randomTarget != null) {
+                            startPathfinding(model, randomTarget, currentTime);
+                            stateChangeTime = currentTime;
+                        }
+                    }
+                    break;
+
+                case PACK:
+                    // Rester près des autres membres de la meute
+                    maintainPackCohesion(model, currentTime);
+                    break;
+            }
+        }
+
+        private void handleSpecialBehavior(GameModel model, double currentTime) {
+            switch (entityClass) {
+                case MAGE:
+                case ELITE_MAGE:
+                    // Les mages essaient de garder leurs distances
+                    if (distanceTo(target) < stats.range * 0.7) {
+                        retreatFromTarget(model, currentTime);
+                    }
+                    break;
+
+                case BOSS:
+                    // Le boss a des capacités spéciales
+                    if (stats.getHealthPercent() < 0.5 && currentTime - lastDamageTime > 3.0) {
+                        performBossSpecialAttack(model, currentTime);
+                    }
+                    break;
+            }
+        }
+
+        private void retreatFromTarget(GameModel model, double currentTime) {
+            if (target == null) return;
+
+            // Calculer une position de retraite
+            double dx = position.getX() - target.position.getX();
+            double dy = position.getY() - target.position.getY();
+            double distance = Math.sqrt(dx * dx + dy * dy);
+
+            if (distance > 0) {
+                double retreatDistance = 2.0;
+                Point2D retreatPos = new Point2D(
+                        position.getX() + (dx / distance) * retreatDistance,
+                        position.getY() + (dy / distance) * retreatDistance
+                );
+
+                if (model.isValidTile((int)retreatPos.getX(), (int)retreatPos.getY()) &&
+                        model.canWalkThrough((int)retreatPos.getX(), (int)retreatPos.getY())) {
+                    startPathfinding(model, retreatPos, currentTime);
+                }
+            }
+        }
+
+        private void performBossSpecialAttack(GameModel model, double currentTime) {
+            // Attaque spéciale du boss : tempête de projectiles
+            System.out.println("👹 Le boss utilise une attaque spéciale!");
+
+            for (int i = 0; i < 8; i++) {
+                double angle = (Math.PI * 2 * i) / 8;
+                Point2D projectileTarget = new Point2D(
+                        position.getX() + Math.cos(angle) * 5,
+                        position.getY() + Math.sin(angle) * 5
+                );
+
+                // Créer un projectile de foudre
+                // Note: Cette méthode sera appelée avec la liste des projectiles dans le contexte approprié
+            }
+
+            lastDamageTime = currentTime;
+        }
+
+        private void alertPackMembers(List<Entity> allEntities, Entity threat) {
+            if (packId == null) return;
+
+            for (Entity entity : allEntities) {
+                if (entity instanceof Enemy) {
+                    Enemy enemy = (Enemy) entity;
+                    if (packId.equals(enemy.packId) && enemy.target == null) {
+                        enemy.target = threat;
+                        enemy.stateChangeTime = System.currentTimeMillis() / 1000.0;
+                    }
+                }
+            }
+        }
+
+        private void maintainPackCohesion(GameModel model, double currentTime) {
+            if (packId == null) return;
+
+            // Trouver le centre de la meute
+            Point2D packCenter = calculatePackCenter(model);
+            if (packCenter != null) {
+                double distanceToCenter = position.distance(packCenter);
+                if (distanceToCenter > 5.0 && currentTime - lastPathfindTime > 2.0) {
+                    startPathfinding(model, packCenter, currentTime);
+                }
+            }
+        }
+
+        private Point2D calculatePackCenter(GameModel model) {
+            List<Enemy> packMembers = new ArrayList<>();
+
+            // Trouver tous les membres de la meute
+            for (Entity entity : model.getCombatSystem().getEntities()) {
+                if (entity instanceof Enemy) {
+                    Enemy enemy = (Enemy) entity;
+                    if (packId.equals(enemy.packId) && enemy.stats.isAlive()) {
+                        packMembers.add(enemy);
+                    }
+                }
+            }
+
+            if (packMembers.isEmpty()) return null;
+
+            double totalX = 0, totalY = 0;
+            for (Enemy member : packMembers) {
+                totalX += member.position.getX();
+                totalY += member.position.getY();
+            }
+
+            return new Point2D(totalX / packMembers.size(), totalY / packMembers.size());
+        }
+
+        private Point2D generateRandomPatrolPoint() {
+            Random rand = new Random();
+            double angle = rand.nextDouble() * Math.PI * 2;
+            double distance = 2 + rand.nextDouble() * 3; // 2-5 cases
+
+            return new Point2D(
+                    homePosition.getX() + Math.cos(angle) * distance,
+                    homePosition.getY() + Math.sin(angle) * distance
+            );
         }
 
         private Player findPlayer(List<Entity> entities) {
@@ -330,11 +505,12 @@ public class CombatSystem {
                 // Créer un projectile
                 Projectile projectile = new Projectile(position, target.position, damageType, damage, 8.0, this);
                 projectiles.add(projectile);
-                System.out.println(entityClass + " tire un projectile vers le joueur!");
             } else {
                 // Attaque de mêlée directe
-                int finalDamage = target.takeDamage(damage, damageType);
-                System.out.println(entityClass + " inflige " + finalDamage + " dégâts de mêlée!");
+                if (currentTime - lastDamageTime > 0.5) { // Éviter le spam de dégâts
+                    int finalDamage = target.takeDamage(damage, damageType);
+                    lastDamageTime = currentTime;
+                }
             }
         }
 
@@ -343,6 +519,8 @@ public class CombatSystem {
                 case MAGE:
                 case ELITE_MAGE:
                     return Math.random() < 0.5 ? DamageType.FIRE : DamageType.ICE;
+                case ELITE_ARCHER:
+                    return Math.random() < 0.3 ? DamageType.POISON : DamageType.PHYSICAL;
                 case BOSS:
                     DamageType[] types = {DamageType.FIRE, DamageType.LIGHTNING, DamageType.POISON};
                     return types[(int)(Math.random() * types.length)];
@@ -359,10 +537,15 @@ public class CombatSystem {
         private void startPathfinding(GameModel model, Point2D destination, double currentTime) {
             lastPathfindTime = currentTime;
 
-            // Pathfinding simple (peut être amélioré avec A*)
+            // Pathfinding simple - peut être amélioré avec A*
             path.clear();
-            path.add(destination);
-            pathIndex = 0;
+
+            // Vérifier que la destination est valide
+            if (model.isValidTile((int)destination.getX(), (int)destination.getY()) &&
+                    model.canWalkThrough((int)destination.getX(), (int)destination.getY())) {
+                path.add(destination);
+                pathIndex = 0;
+            }
         }
 
         private void followPath(double currentTime) {
@@ -384,7 +567,7 @@ public class CombatSystem {
                 double length = Math.sqrt(dx * dx + dy * dy);
 
                 if (length > 0) {
-                    double moveDistance = stats.moveSpeed * 0.1; // Ajustez selon votre système de timing
+                    double moveDistance = stats.moveSpeed * 0.5; // Ajusté pour le deltaTime
                     double newX = position.getX() + (dx / length) * moveDistance;
                     double newY = position.getY() + (dy / length) * moveDistance;
                     position = new Point2D(newX, newY);
@@ -393,28 +576,20 @@ public class CombatSystem {
                 lastMoveTime = currentTime;
             }
         }
-
-        private void patrol(GameModel model, double currentTime) {
-            // Comportement de patrouille simple
-            if (behavior == BehaviorType.GUARDIAN) {
-                // Retourner à la position de garde si trop loin
-                double distanceFromHome = position.distance(homePosition);
-                if (distanceFromHome > 2.0) {
-                    startPathfinding(model, homePosition, currentTime);
-                    followPath(currentTime);
-                }
-            }
-            // Les solitaires et les meutes peuvent avoir d'autres comportements de patrouille
-        }
     }
 
-    // Gestion des entités et projectiles
+    // ================================
+    // GESTION PRINCIPALE DU SYSTÈME
+    // ================================
+
     private List<Entity> entities = new ArrayList<>();
     private List<Projectile> projectiles = new ArrayList<>();
     private double gameTime = 0;
+    private Random random = new Random();
 
     public void addEntity(Entity entity) {
         entities.add(entity);
+        System.out.println("🎮 Entité ajoutée: " + (entity.isPlayer ? "Joueur" : entity.entityClass));
     }
 
     public void removeEntity(Entity entity) {
@@ -433,23 +608,35 @@ public class CombatSystem {
         gameTime += deltaTime;
 
         // Mettre à jour toutes les entités
+        updateEntities(model, deltaTime);
+
+        // Mettre à jour les projectiles
+        updateProjectiles(deltaTime);
+
+        // Nettoyer les entités mortes
+        cleanupDeadEntities();
+    }
+
+    private void updateEntities(GameModel model, double deltaTime) {
         Iterator<Entity> entityIterator = entities.iterator();
         while (entityIterator.hasNext()) {
             Entity entity = entityIterator.next();
 
             if (!entity.stats.isAlive()) {
                 if (!entity.isPlayer) {
-                    System.out.println("Ennemi " + entity.entityClass + " éliminé!");
-                    entityIterator.remove();
-                    // Ici on pourrait ajouter des récompenses (XP, loot)
+                    // L'entité sera supprimée dans cleanupDeadEntities()
+                    continue;
+                } else {
+                    // Le joueur est mort - le GameModel gère cela
+                    continue;
                 }
-                continue;
             }
 
             entity.update(model, entities, projectiles, gameTime);
         }
+    }
 
-        // Mettre à jour les projectiles
+    private void updateProjectiles(double deltaTime) {
         Iterator<Projectile> projectileIterator = projectiles.iterator();
         while (projectileIterator.hasNext()) {
             Projectile projectile = projectileIterator.next();
@@ -459,14 +646,27 @@ public class CombatSystem {
                 continue;
             }
 
-            projectile.update();
+            projectile.update(deltaTime);
 
             // Vérifier les collisions avec les entités
-            checkProjectileCollisions(projectile);
+            if (checkProjectileCollisions(projectile)) {
+                projectileIterator.remove();
+            }
         }
     }
 
-    private void checkProjectileCollisions(Projectile projectile) {
+    private void cleanupDeadEntities() {
+        Iterator<Entity> entityIterator = entities.iterator();
+        while (entityIterator.hasNext()) {
+            Entity entity = entityIterator.next();
+
+            if (!entity.isPlayer && !entity.stats.isAlive()) {
+                entityIterator.remove();
+            }
+        }
+    }
+
+    private boolean checkProjectileCollisions(Projectile projectile) {
         for (Entity entity : entities) {
             if (entity == projectile.source) continue; // Pas de friendly fire pour l'instant
 
@@ -474,15 +674,17 @@ public class CombatSystem {
             if (distance < 0.5) {
                 // Collision!
                 int finalDamage = entity.takeDamage(projectile.damage, projectile.damageType);
-                System.out.println("Projectile touche " + (entity.isPlayer ? "joueur" : entity.entityClass) +
-                        " pour " + finalDamage + " dégâts!");
                 projectile.active = false;
-                break;
+                return true;
             }
         }
+        return false;
     }
 
-    // Méthodes utilitaires pour créer des groupes d'ennemis
+    // ================================
+    // MÉTHODES DE SPAWN D'ENNEMIS
+    // ================================
+
     public void spawnEnemyPack(GameModel model, Point2D centerPosition, EnemyClass baseClass, int count) {
         String packId = "pack_" + System.currentTimeMillis();
 
@@ -499,18 +701,96 @@ public class CombatSystem {
             addEntity(enemy);
         }
 
-        System.out.println("Meute de " + count + " " + baseClass + " apparue!");
+        System.out.println("🐺 Meute de " + count + " " + baseClass + " apparue!");
     }
 
-    public void spawnSolitaryEnemy(Point2D position, EnemyClass enemyClass) {
+    public Entity spawnSolitaryEnemy(Point2D position, EnemyClass enemyClass) {
         Enemy enemy = new Enemy(position, enemyClass, BehaviorType.SOLITARY);
         addEntity(enemy);
-        System.out.println("Ennemi solitaire " + enemyClass + " apparu!");
+        return enemy;
     }
 
-    public void spawnGuardian(Point2D position, EnemyClass enemyClass) {
+    public Entity spawnGuardian(Point2D position, EnemyClass enemyClass) {
         Enemy enemy = new Enemy(position, enemyClass, BehaviorType.GUARDIAN);
         addEntity(enemy);
-        System.out.println("Gardien " + enemyClass + " placé!");
+        return enemy;
+    }
+
+    // ================================
+    // MÉTHODES UTILITAIRES
+    // ================================
+
+    public int getAliveEnemyCount() {
+        return (int) entities.stream()
+                .filter(e -> !e.isPlayer && e.stats.isAlive())
+                .count();
+    }
+
+    public int getTotalEnemyCount() {
+        return (int) entities.stream()
+                .filter(e -> !e.isPlayer)
+                .count();
+    }
+
+    public boolean hasBoss() {
+        return entities.stream()
+                .anyMatch(e -> !e.isPlayer &&
+                        e.entityClass == EnemyClass.BOSS &&
+                        e.stats.isAlive());
+    }
+
+    public Entity findNearestEnemyToPosition(Point2D position, double maxDistance) {
+        Entity nearest = null;
+        double minDistance = maxDistance;
+
+        for (Entity entity : entities) {
+            if (entity.isPlayer || !entity.stats.isAlive()) continue;
+
+            double distance = entity.position.distance(position);
+            if (distance < minDistance) {
+                minDistance = distance;
+                nearest = entity;
+            }
+        }
+
+        return nearest;
+    }
+
+    public List<Entity> getEnemiesInRadius(Point2D center, double radius) {
+        List<Entity> enemiesInRadius = new ArrayList<>();
+
+        for (Entity entity : entities) {
+            if (entity.isPlayer || !entity.stats.isAlive()) continue;
+
+            if (entity.position.distance(center) <= radius) {
+                enemiesInRadius.add(entity);
+            }
+        }
+
+        return enemiesInRadius;
+    }
+
+    public void printStats() {
+        System.out.println("=== Statistiques du Système de Combat ===");
+        System.out.println("Entités totales: " + entities.size());
+        System.out.println("Ennemis vivants: " + getAliveEnemyCount());
+        System.out.println("Projectiles actifs: " + projectiles.size());
+        System.out.println("Boss présent: " + (hasBoss() ? "OUI" : "NON"));
+        System.out.println("Temps de jeu: " + String.format("%.1f", gameTime) + "s");
+
+        // Statistiques par classe
+        Map<EnemyClass, Integer> classCounts = new HashMap<>();
+        for (Entity entity : entities) {
+            if (!entity.isPlayer && entity.stats.isAlive()) {
+                classCounts.put(entity.entityClass,
+                        classCounts.getOrDefault(entity.entityClass, 0) + 1);
+            }
+        }
+
+        System.out.println("Répartition par classe:");
+        for (Map.Entry<EnemyClass, Integer> entry : classCounts.entrySet()) {
+            System.out.println("  " + entry.getKey() + ": " + entry.getValue());
+        }
+        System.out.println("=====================================");
     }
 }

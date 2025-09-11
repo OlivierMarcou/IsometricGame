@@ -7,6 +7,8 @@ import java.io.InputStreamReader;
 import java.util.*;
 
 import net.arkaine.combat.CombatSystem;
+import net.arkaine.combat.CombatEventsManager;
+import net.arkaine.config.EnemyConfig;
 import net.arkaine.inventory.InventorySystem;
 
 /**
@@ -26,13 +28,15 @@ public class GameModel {
 
     // État du joueur
     private Point2D playerPosition = new Point2D(MAP_SIZE / 2, MAP_SIZE / 2);
-
     CombatSystem.Entity playerEntity = new CombatSystem.Player(playerPosition);
     private double playerAngle = 0;
     private Set<String> playerKeys = new HashSet<>();
     private InventorySystem inventory = new InventorySystem(); // Système d'inventaire
 
+    // Système de combat
     private CombatSystem combatSystem = new CombatSystem();
+    private CombatEventsManager combatEventsManager;
+
     // État du mouvement
     private List<Point2D> currentPath = new ArrayList<>();
     private Point2D targetPosition = null;
@@ -59,34 +63,6 @@ public class GameModel {
         public Item(String type, int count) {
             this.type = type;
             this.count = count;
-        }
-    }
-
-    private boolean parseCeilingMap(String json) {
-        try {
-            String ceilingData = extractJsonArray(json, "ceilingMap");
-            if (ceilingData == null) {
-                System.out.println("⚠️ CeilingMap non trouvé dans le JSON (optionnel)");
-                return true; // Non critique
-            }
-
-            System.out.println("🔍 Parsing CeilingMap, taille données: " + ceilingData.length());
-            parseIntArrayData(ceilingData, ceilingMap);
-
-            // Vérification
-            int ceilingCount = 0;
-            for (int x = 0; x < MAP_SIZE; x++) {
-                for (int y = 0; y < MAP_SIZE; y++) {
-                    if (ceilingMap[x][y] != -1) ceilingCount++;
-                }
-            }
-            System.out.println("✅ CeilingMap chargé - " + ceilingCount + " plafonds trouvés");
-            return true;
-
-        } catch (Exception e) {
-            System.err.println("❌ Erreur parsing CeilingMap: " + e.getMessage());
-            e.printStackTrace();
-            return false;
         }
     }
 
@@ -118,6 +94,9 @@ public class GameModel {
 
     public GameModel() {
         initializeItemMap();
+
+        // Initialiser le gestionnaire d'événements de combat
+        combatEventsManager = new CombatEventsManager(this, combatSystem);
     }
 
     @SuppressWarnings("unchecked")
@@ -146,6 +125,10 @@ public class GameModel {
     public double getPlayerAngle() { return playerAngle; }
     public Set<String> getPlayerKeys() { return playerKeys; }
     public InventorySystem getInventory() { return inventory; }
+
+    // Getters pour le système de combat
+    public CombatSystem getCombatSystem() { return combatSystem; }
+    public CombatEventsManager getCombatEventsManager() { return combatEventsManager; }
 
     public List<Point2D> getCurrentPath() { return currentPath; }
     public Point2D getTargetPosition() { return targetPosition; }
@@ -198,6 +181,10 @@ public class GameModel {
             boolean success = parseJson(json.toString());
             if (success) {
                 initializeWallProperties();
+
+                // Générer les ennemis après le chargement de la carte
+                spawnInitialEnemies();
+
                 notifyMapLoaded();
             }
             return success;
@@ -210,7 +197,6 @@ public class GameModel {
     }
 
     private boolean parseJson(String json) {
-        // Parsing simplifié - vous pouvez réutiliser votre code existant
         try {
             System.out.println("🔍 Début du parsing JSON...");
 
@@ -301,6 +287,34 @@ public class GameModel {
         }
     }
 
+    private boolean parseCeilingMap(String json) {
+        try {
+            String ceilingData = extractJsonArray(json, "ceilingMap");
+            if (ceilingData == null) {
+                System.out.println("⚠️ CeilingMap non trouvé dans le JSON (optionnel)");
+                return true; // Non critique
+            }
+
+            System.out.println("🔍 Parsing CeilingMap, taille données: " + ceilingData.length());
+            parseIntArrayData(ceilingData, ceilingMap);
+
+            // Vérification
+            int ceilingCount = 0;
+            for (int x = 0; x < MAP_SIZE; x++) {
+                for (int y = 0; y < MAP_SIZE; y++) {
+                    if (ceilingMap[x][y] != -1) ceilingCount++;
+                }
+            }
+            System.out.println("✅ CeilingMap chargé - " + ceilingCount + " plafonds trouvés");
+            return true;
+
+        } catch (Exception e) {
+            System.err.println("❌ Erreur parsing CeilingMap: " + e.getMessage());
+            e.printStackTrace();
+            return false;
+        }
+    }
+
     private boolean parseWallTypes(String json) {
         try {
             String wallTypeData = extractJsonArray(json, "wallTypes");
@@ -322,12 +336,11 @@ public class GameModel {
     }
 
     private String extractJsonArray(String json, String arrayName) {
-        // Essayer plusieurs variantes du marqueur de début
         String[] markers = {
-                "\"" + arrayName + "\":[",     // Sans espace
-                "\"" + arrayName + "\": [",    // Avec espace après :
-                "\"" + arrayName + "\" :[",    // Avec espace avant :
-                "\"" + arrayName + "\" : ["    // Avec espaces autour de :
+                "\"" + arrayName + "\":[",
+                "\"" + arrayName + "\": [",
+                "\"" + arrayName + "\" :[",
+                "\"" + arrayName + "\" : ["
         };
 
         int startIndex = -1;
@@ -343,19 +356,11 @@ public class GameModel {
 
         if (startIndex == -1) {
             System.out.println("❌ Aucun marqueur trouvé pour: " + arrayName);
-            System.out.println("Recherché: " + Arrays.toString(markers));
-            // Debug : afficher un échantillon du JSON autour du nom recherché
-            int pos = json.indexOf("\"" + arrayName + "\"");
-            if (pos != -1) {
-                int start = Math.max(0, pos - 20);
-                int end = Math.min(json.length(), pos + 50);
-                System.out.println("Trouvé dans JSON: ..." + json.substring(start, end) + "...");
-            }
             return null;
         }
 
         System.out.println("✅ Marqueur trouvé: " + usedMarker);
-        startIndex += usedMarker.length() - 1; // Position sur '['
+        startIndex += usedMarker.length() - 1;
 
         int brackets = 0;
         int endIndex = startIndex;
@@ -433,7 +438,6 @@ public class GameModel {
 
         for (int x = 0; x < MAP_SIZE; x++) {
             for (int y = 0; y < MAP_SIZE; y++) {
-                // Sol avec plus de variété
                 floorMap[x][y] = rand.nextInt(50);
 
                 if (rand.nextDouble() < 0.1) {
@@ -458,22 +462,10 @@ public class GameModel {
 
         initializeWallProperties();
 
-        // Statistiques de la carte générée
-        int floorVariety = 0, wallCount = 0;
-        Set<Integer> floorTypesUsed = new HashSet<>();
+        // Générer les ennemis sur la carte par défaut
+        spawnInitialEnemies();
 
-        for (int x = 0; x < MAP_SIZE; x++) {
-            for (int y = 0; y < MAP_SIZE; y++) {
-                floorTypesUsed.add(floorMap[x][y]);
-                if (wallMap[x][y] != -1) wallCount++;
-            }
-        }
-
-        System.out.println("✅ Carte par défaut générée:");
-        System.out.println("  - Types de sol utilisés: " + floorTypesUsed.size());
-        System.out.println("  - Murs placés: " + wallCount);
-        System.out.println("  - Plage de valeurs sol: 0-49");
-
+        System.out.println("✅ Carte par défaut générée");
         notifyMapLoaded();
     }
 
@@ -495,6 +487,301 @@ public class GameModel {
         playerKeys.add("key_1250");
         playerKeys.add("key_750");
     }
+
+    // ================================
+    // SYSTÈME DE COMBAT ET ENNEMIS
+    // ================================
+
+    private void spawnInitialEnemies() {
+        System.out.println("🐺 Génération des ennemis sur la carte...");
+
+        // Ajouter le joueur au système de combat
+        combatSystem.addEntity(playerEntity);
+
+        Random rand = new Random();
+        int totalEnemies = 0;
+
+        // 1. Spawner quelques meutes (utiliser la config)
+        int numPacks = EnemyConfig.MIN_PACKS + rand.nextInt(EnemyConfig.MAX_PACKS - EnemyConfig.MIN_PACKS + 1);
+        for (int i = 0; i < numPacks; i++) {
+            Point2D packPos = findSafeSpawnPosition(rand);
+            if (packPos != null) {
+                CombatSystem.EnemyClass packClass = rand.nextDouble() < EnemyConfig.PACK_CLASS_WEIGHTS[0] ?
+                        CombatSystem.EnemyClass.WARRIOR : CombatSystem.EnemyClass.ARCHER;
+
+                int packSize = EnemyConfig.MIN_PACK_SIZE + rand.nextInt(EnemyConfig.MAX_PACK_SIZE - EnemyConfig.MIN_PACK_SIZE + 1);
+                combatSystem.spawnEnemyPack(this, packPos, packClass, packSize);
+                totalEnemies += packSize;
+            }
+        }
+
+        // 2. Spawner des ennemis solitaires
+        int numSolitary = EnemyConfig.MIN_SOLITARY + rand.nextInt(EnemyConfig.MAX_SOLITARY - EnemyConfig.MIN_SOLITARY + 1);
+        for (int i = 0; i < numSolitary; i++) {
+            Point2D soloPos = findSafeSpawnPosition(rand);
+            if (soloPos != null) {
+                CombatSystem.EnemyClass soloClass = getRandomBasicEnemyClass(rand);
+                combatSystem.spawnSolitaryEnemy(soloPos, soloClass);
+                totalEnemies++;
+            }
+        }
+
+        // 3. Spawner quelques élites
+        int numElites = EnemyConfig.MIN_ELITES + rand.nextInt(EnemyConfig.MAX_ELITES - EnemyConfig.MIN_ELITES + 1);
+        for (int i = 0; i < numElites; i++) {
+            Point2D elitePos = findSafeSpawnPosition(rand);
+            if (elitePos != null) {
+                CombatSystem.EnemyClass eliteClass = getRandomEliteEnemyClass(rand);
+                combatSystem.spawnSolitaryEnemy(elitePos, eliteClass);
+                totalEnemies++;
+            }
+        }
+
+        // 4. Spawner quelques gardiens près des maisons
+        int numGuardians = EnemyConfig.MIN_GUARDIANS + rand.nextInt(EnemyConfig.MAX_GUARDIANS - EnemyConfig.MIN_GUARDIANS + 1);
+        for (int i = 0; i < numGuardians; i++) {
+            Point2D guardPos = findGuardianSpawnPosition(rand);
+            if (guardPos != null) {
+                CombatSystem.EnemyClass guardClass = rand.nextBoolean() ?
+                        CombatSystem.EnemyClass.ELITE_WARRIOR : CombatSystem.EnemyClass.ELITE_MAGE;
+                combatSystem.spawnGuardian(guardPos, guardClass);
+                totalEnemies++;
+            }
+        }
+
+        // 5. Un boss rare
+        if (rand.nextDouble() < EnemyConfig.BOSS_SPAWN_CHANCE) {
+            Point2D bossPos = findBossSpawnPosition(rand);
+            if (bossPos != null) {
+                combatEventsManager.spawnBossAt(bossPos);
+                totalEnemies++;
+            }
+        }
+
+        System.out.println("✅ " + totalEnemies + " ennemis générés sur la carte");
+    }
+
+    private Point2D findSafeSpawnPosition(Random rand) {
+        for (int attempts = 0; attempts < 50; attempts++) {
+            int x = 5 + rand.nextInt(MAP_SIZE - 10);
+            int y = 5 + rand.nextInt(MAP_SIZE - 10);
+
+            if (isValidSpawnPosition(x, y)) {
+                return new Point2D(x, y);
+            }
+        }
+        return null;
+    }
+
+    private Point2D findGuardianSpawnPosition(Random rand) {
+        for (int attempts = 0; attempts < 30; attempts++) {
+            int x = rand.nextInt(MAP_SIZE);
+            int y = rand.nextInt(MAP_SIZE);
+
+            if (isNearHouse(x, y) && isValidSpawnPosition(x, y)) {
+                return new Point2D(x, y);
+            }
+        }
+
+        return findSafeSpawnPosition(rand);
+    }
+
+    private Point2D findBossSpawnPosition(Random rand) {
+        for (int attempts = 0; attempts < 30; attempts++) {
+            int x = 10 + rand.nextInt(MAP_SIZE - 20);
+            int y = 10 + rand.nextInt(MAP_SIZE - 20);
+
+            if (isValidSpawnPosition(x, y) && isIsolatedPosition(x, y)) {
+                return new Point2D(x, y);
+            }
+        }
+
+        return findSafeSpawnPosition(rand);
+    }
+
+    private boolean isValidSpawnPosition(int x, int y) {
+        if (!isValidTile(x, y)) return false;
+
+        double distanceToPlayer = Math.abs(x - playerPosition.getX()) + Math.abs(y - playerPosition.getY());
+        if (distanceToPlayer < EnemyConfig.MIN_SPAWN_DISTANCE_FROM_PLAYER) return false;
+
+        if (!canWalkThrough(x, y)) return false;
+
+        for (Item item : itemMap[x][y]) {
+            if (item.type.contains("key") || item.type.contains("treasure")) {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    private boolean isNearHouse(int x, int y) {
+        for (int dx = -3; dx <= 3; dx++) {
+            for (int dy = -3; dy <= 3; dy++) {
+                int checkX = x + dx;
+                int checkY = y + dy;
+
+                if (isValidTile(checkX, checkY)) {
+                    int floor = floorMap[checkX][checkY];
+                    if (floor >= 35 && floor <= 39) {
+                        return true;
+                    }
+                }
+            }
+        }
+        return false;
+    }
+
+    private boolean isIsolatedPosition(int x, int y) {
+        for (int dx = -3; dx <= 3; dx++) {
+            for (int dy = -3; dy <= 3; dy++) {
+                int checkX = x + dx;
+                int checkY = y + dy;
+
+                if (isValidTile(checkX, checkY) && wallMap[checkX][checkY] != -1) {
+                    return false;
+                }
+            }
+        }
+        return true;
+    }
+
+    private CombatSystem.EnemyClass getRandomBasicEnemyClass(Random rand) {
+        CombatSystem.EnemyClass[] basicClasses = {
+                CombatSystem.EnemyClass.WARRIOR,
+                CombatSystem.EnemyClass.MAGE,
+                CombatSystem.EnemyClass.ARCHER
+        };
+        return basicClasses[rand.nextInt(basicClasses.length)];
+    }
+
+    private CombatSystem.EnemyClass getRandomEliteEnemyClass(Random rand) {
+        CombatSystem.EnemyClass[] eliteClasses = {
+                CombatSystem.EnemyClass.ELITE_WARRIOR,
+                CombatSystem.EnemyClass.ELITE_MAGE,
+                CombatSystem.EnemyClass.ELITE_ARCHER
+        };
+        return eliteClasses[rand.nextInt(eliteClasses.length)];
+    }
+
+    public boolean updateCombat(double deltaTime) {
+        // Mettre à jour le système de combat
+        combatSystem.update(this, deltaTime);
+
+        // Mettre à jour les événements de combat
+        combatEventsManager.update(System.currentTimeMillis() / 1000.0);
+
+        // Gérer les morts d'ennemis pour les récompenses
+        handleEnemyDeaths();
+
+        if (!playerEntity.stats.isAlive()) {
+            setMessageAbovePlayer("GAME OVER");
+            return false;
+        }
+
+        return true;
+    }
+
+    private void handleEnemyDeaths() {
+        List<CombatSystem.Entity> deadEnemies = new ArrayList<>();
+
+        for (CombatSystem.Entity entity : combatSystem.getEntities()) {
+            if (!entity.isPlayer && !entity.stats.isAlive()) {
+                deadEnemies.add(entity);
+            }
+        }
+
+        for (CombatSystem.Entity deadEnemy : deadEnemies) {
+            combatEventsManager.handleEnemyDeath(deadEnemy, deadEnemy.position);
+        }
+    }
+
+    public void respawnEnemiesIfNeeded() {
+        List<CombatSystem.Entity> currentEnemies = combatSystem.getEntities();
+        long aliveEnemies = currentEnemies.stream()
+                .filter(e -> !e.isPlayer && e.stats.isAlive())
+                .count();
+
+        if (aliveEnemies < EnemyConfig.MIN_ENEMIES_BEFORE_RESPAWN) {
+            Random rand = new Random();
+            int enemiesToSpawn = EnemyConfig.RESPAWN_AMOUNT_MIN +
+                    rand.nextInt(EnemyConfig.RESPAWN_AMOUNT_MAX - EnemyConfig.RESPAWN_AMOUNT_MIN + 1);
+
+            for (int i = 0; i < enemiesToSpawn; i++) {
+                Point2D spawnPos = findSafeSpawnPosition(rand);
+                if (spawnPos != null) {
+                    int floorType = floorMap[(int)spawnPos.getX()][(int)spawnPos.getY()];
+                    CombatSystem.EnemyClass[] preferredClasses =
+                            EnemyConfig.BiomeSpawning.getPreferredEnemiesForFloor(floorType);
+
+                    CombatSystem.EnemyClass enemyClass = preferredClasses[rand.nextInt(preferredClasses.length)];
+                    combatSystem.spawnSolitaryEnemy(spawnPos, enemyClass);
+                }
+            }
+
+            System.out.println("🔄 " + enemiesToSpawn + " nouveaux ennemis sont apparus!");
+            setMessageAbovePlayer("Enemies respawned!");
+        }
+    }
+
+    public void playerAttack(Point2D targetPosition) {
+        if (!playerEntity.canAttack(System.currentTimeMillis() / 1000.0)) {
+            return;
+        }
+
+        CombatSystem.Entity target = null;
+        double minDistance = Double.MAX_VALUE;
+
+        for (CombatSystem.Entity entity : combatSystem.getEntities()) {
+            if (entity.isPlayer || !entity.stats.isAlive()) continue;
+
+            double distance = entity.position.distance(targetPosition);
+            if (distance < minDistance && distance <= playerEntity.stats.range) {
+                minDistance = distance;
+                target = entity;
+            }
+        }
+
+        if (target != null) {
+            CombatSystem.DamageType damageType = CombatSystem.DamageType.PHYSICAL;
+            int damage = playerEntity.stats.damage + (int)(Math.random() * 10 - 5);
+            int finalDamage = target.takeDamage(damage, damageType);
+
+            setMessageAbovePlayer("Hit for " + finalDamage + "!");
+            playerEntity.lastAttackTime = System.currentTimeMillis() / 1000.0;
+
+            System.out.println("Joueur attaque " + target.entityClass + " pour " + finalDamage + " dégâts!");
+        } else {
+            setMessageAbovePlayer("Miss!");
+        }
+    }
+
+    // ================================
+    // MÉTHODES DE DEBUG POUR LE COMBAT
+    // ================================
+
+    public void debugTriggerInvasion() {
+        combatEventsManager.forceTriggerInvasion();
+    }
+
+    public void debugClearAllEnemies() {
+        combatEventsManager.clearAllEnemies();
+    }
+
+    public void debugSpawnBoss() {
+        Point2D playerPos = getPlayerPosition();
+        Point2D bossPos = new Point2D(playerPos.getX() + 5, playerPos.getY() + 5);
+        combatEventsManager.spawnBossAt(bossPos);
+    }
+
+    public void debugPrintCombatStats() {
+        combatEventsManager.printEventStats();
+    }
+
+    // ================================
+    // LOGIQUE DE JEU EXISTANTE
+    // ================================
 
     public boolean isValidTile(int x, int y) {
         return x >= 0 && x < MAP_SIZE && y >= 0 && y < MAP_SIZE;
@@ -548,7 +835,6 @@ public class GameModel {
     public boolean tryCollectItems(int x, int y) {
         if (!isValidTile(x, y)) return false;
 
-        // Vérifier si le joueur est assez proche (case actuelle ou adjacente)
         double distance = Math.abs(x - playerPosition.getX()) + Math.abs(y - playerPosition.getY());
         if (distance > 1.5) {
             setMessageAbovePlayer("Too far");
@@ -560,13 +846,11 @@ public class GameModel {
             return false;
         }
 
-        // Convertir les objets au format inventaire
         List<InventorySystem.InventoryItem> itemsToCollect = new ArrayList<>();
         for (Item gameItem : groundItems) {
             itemsToCollect.add(new InventorySystem.InventoryItem(gameItem));
         }
 
-        // Essayer de tout ramasser
         boolean collectedAll = true;
         List<InventorySystem.InventoryItem> remaining = new ArrayList<>();
 
@@ -578,18 +862,13 @@ public class GameModel {
         }
 
         if (collectedAll) {
-            // Tout a été ramassé
             groundItems.clear();
             setMessageAbovePlayer("Items collected");
             System.out.println("Tous les objets ont été ramassés");
             return true;
         } else {
-            // Inventaire plein - interface de gestion nécessaire
             setMessageAbovePlayer("Inventory full");
             System.out.println("Inventaire plein - " + remaining.size() + " objets non ramassés");
-
-            // Retourner les informations pour afficher l'interface de gestion
-            // (sera géré dans le contrôleur)
             return false;
         }
     }
@@ -602,105 +881,15 @@ public class GameModel {
     public void dropItemAt(int x, int y, String itemName, int count) {
         if (!isValidTile(x, y)) return;
 
-        // Créer un objet au sol
         Item droppedItem = new Item(itemName, count);
         itemMap[x][y].add(droppedItem);
 
         System.out.println("Objet jeté au sol: " + itemName + " (" + count + ")");
     }
 
-    private void spawnInitialEnemies() {
-        // Quelques ennemis d'exemple dispersés sur la carte
-        Random rand = new Random();
-
-        // Spawner quelques meutes
-        for (int i = 0; i < 3; i++) {
-            Point2D packPos = new Point2D(
-                    10 + rand.nextInt(MAP_SIZE - 20),
-                    10 + rand.nextInt(MAP_SIZE - 20)
-            );
-
-            CombatSystem.EnemyClass packClass = rand.nextBoolean() ?
-                    CombatSystem.EnemyClass.WARRIOR : CombatSystem.EnemyClass.ARCHER;
-
-            combatSystem.spawnEnemyPack(this, packPos, packClass, 3 + rand.nextInt(3));
-        }
-
-        // Spawner quelques solitaires
-        for (int i = 0; i < 5; i++) {
-            Point2D soloPos = new Point2D(
-                    5 + rand.nextInt(MAP_SIZE - 10),
-                    5 + rand.nextInt(MAP_SIZE - 10)
-            );
-
-            CombatSystem.EnemyClass soloClass = CombatSystem.EnemyClass.values()[
-                    rand.nextInt(CombatSystem.EnemyClass.values().length - 1)]; // Pas de BOSS aléatoire
-
-            combatSystem.spawnSolitaryEnemy(soloPos, soloClass);
-        }
-
-        // Spawner quelques gardiens
-        for (int i = 0; i < 2; i++) {
-            Point2D guardPos = new Point2D(
-                    15 + rand.nextInt(MAP_SIZE - 30),
-                    15 + rand.nextInt(MAP_SIZE - 30)
-            );
-
-            CombatSystem.EnemyClass guardClass = rand.nextBoolean() ?
-                    CombatSystem.EnemyClass.ELITE_WARRIOR : CombatSystem.EnemyClass.ELITE_MAGE;
-
-            combatSystem.spawnGuardian(guardPos, guardClass);
-        }
-
-        System.out.println("Ennemis initiaux générés sur la carte");
-    }
-
-    public boolean updateCombat(double deltaTime) {
-        // Mettre à jour le système de combat
-        combatSystem.update(this, deltaTime);
-        // Vérifier si le joueur est mort
-        if (!playerEntity.stats.isAlive()) {
-            setMessageAbovePlayer("GAME OVER");
-            return false; // Jeu terminé
-        }
-
-        return true; // Jeu continue
-    }
-
-    public void playerAttack(Point2D targetPosition) {
-        // Le joueur attaque vers une position
-        if (!playerEntity.canAttack(System.currentTimeMillis() / 1000.0)) {
-            return;
-        }
-
-        // Trouver l'ennemi le plus proche de la position cible
-        CombatSystem.Entity target = null;
-        double minDistance = Double.MAX_VALUE;
-
-        for (CombatSystem.Entity entity : combatSystem.getEntities()) {
-            if (entity.isPlayer || !entity.stats.isAlive()) continue;
-
-            double distance = entity.position.distance(targetPosition);
-            if (distance < minDistance && distance <= playerEntity.stats.range) {
-                minDistance = distance;
-                target = entity;
-            }
-        }
-
-        if (target != null) {
-            // Attaque réussie
-            CombatSystem.DamageType damageType = CombatSystem.DamageType.PHYSICAL; // Par défaut
-            int damage = playerEntity.stats.damage + (int)(Math.random() * 10 - 5);
-            int finalDamage = target.takeDamage(damage, damageType);
-
-            setMessageAbovePlayer("Hit for " + finalDamage + "!");
-            playerEntity.lastAttackTime = System.currentTimeMillis() / 1000.0;
-
-            System.out.println("Joueur attaque " + target.entityClass + " pour " + finalDamage + " dégâts!");
-        } else {
-            setMessageAbovePlayer("Miss!");
-        }
-    }
+    // ================================
+    // GESTION DU MOUVEMENT
+    // ================================
 
     public void startMovement(List<Point2D> path, Point2D target, Point2D clicked) {
         if (path.isEmpty()) {
@@ -753,7 +942,10 @@ public class GameModel {
         return new Point2D(interpX, interpY);
     }
 
-    // Gestion des observateurs
+    // ================================
+    // GESTION DES OBSERVATEURS
+    // ================================
+
     public void addListener(GameModelListener listener) {
         listeners.add(listener);
     }

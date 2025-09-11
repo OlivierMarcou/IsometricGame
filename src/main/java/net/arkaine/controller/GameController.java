@@ -1,5 +1,6 @@
 package net.arkaine.controller;
 
+import net.arkaine.combat.CombatSystem;
 import net.arkaine.inventory.InventorySystem;
 import net.arkaine.model.GameModel;
 import net.arkaine.view.GameView;
@@ -26,6 +27,10 @@ public class GameController implements GameModel.GameModelListener {
     private Timeline moveTimeline;
     private Timeline messageTimeline;
     private Timeline exclamationTimeline;
+    private Timeline respawnTimeline;
+
+    // Variables pour le système de combat
+    private double lastUpdateTime = 0;
 
     public GameController(GameModel model, GameView view, Stage parentStage) {
         this.model = model;
@@ -79,8 +84,14 @@ public class GameController implements GameModel.GameModelListener {
         if (clickedTile != null && model.isValidTile((int)clickedTile.getX(), (int)clickedTile.getY())) {
 
             if (e.getButton() == MouseButton.PRIMARY) {
-                // Clic gauche - déplacement
-                handleMovementRequest(clickedTile);
+                // Vérifier s'il y a un ennemi à cette position pour l'attaquer
+                if (isEnemyAtPosition(clickedTile)) {
+                    // Attaque
+                    model.playerAttack(clickedTile);
+                } else {
+                    // Déplacement normal
+                    handleMovementRequest(clickedTile);
+                }
             } else if (e.getButton() == MouseButton.SECONDARY) {
                 // Clic droit - ramasser des objets
                 handleItemCollection((int)clickedTile.getX(), (int)clickedTile.getY());
@@ -104,6 +115,22 @@ public class GameController implements GameModel.GameModelListener {
 
     private void handleDoorInteraction(int x, int y) {
         model.handleDoorInteraction(x, y);
+    }
+
+    // Nouvelle méthode pour vérifier la présence d'ennemis
+    private boolean isEnemyAtPosition(Point2D position) {
+        List<CombatSystem.Entity> entities = model.getCombatSystem().getEntities();
+
+        for (CombatSystem.Entity entity : entities) {
+            if (!entity.isPlayer && entity.stats.isAlive()) {
+                double distance = entity.position.distance(position);
+                if (distance <= 0.7) { // Tolérance pour le clic
+                    return true;
+                }
+            }
+        }
+
+        return false;
     }
 
     // Algorithme A* pour le pathfinding avec diagonales
@@ -189,20 +216,60 @@ public class GameController implements GameModel.GameModelListener {
 
     // Méthodes publiques pour le contrôle externe
     public void startGameLoop() {
+        // Initialiser le temps
+        lastUpdateTime = System.currentTimeMillis() / 1000.0;
+
+        // Boucle de jeu principale
         Timeline gameLoop = new Timeline(new KeyFrame(Duration.millis(16), e -> update()));
         gameLoop.setCycleCount(Timeline.INDEFINITE);
         gameLoop.play();
+
+        // Timer pour respawn d'ennemis (toutes les 45 secondes selon la config)
+        respawnTimeline = new Timeline(new KeyFrame(Duration.seconds(45), e -> {
+            model.respawnEnemiesIfNeeded();
+        }));
+        respawnTimeline.setCycleCount(Timeline.INDEFINITE);
+        respawnTimeline.play();
     }
 
     private void update() {
+        double currentTime = System.currentTimeMillis() / 1000.0;
+        double deltaTime = currentTime - lastUpdateTime;
+        lastUpdateTime = currentTime;
+
         // Mettre à jour le mouvement
         if (model.isMoving()) {
             model.updateMovement();
             view.updateCameraToFollowPlayer(model);
         }
 
+        // Mettre à jour le système de combat
+        if (!model.updateCombat(deltaTime)) {
+            // Le joueur est mort - gérer la fin de partie
+            handleGameOver();
+            return;
+        }
+
         // Rendre la vue
         view.render(model);
+    }
+
+    // Nouvelle méthode pour gérer la fin de partie
+    private void handleGameOver() {
+        System.out.println("💀 GAME OVER - Le joueur est mort!");
+
+        // Arrêter toutes les animations
+        if (moveTimeline != null) {
+            moveTimeline.stop();
+        }
+        if (respawnTimeline != null) {
+            respawnTimeline.stop();
+        }
+
+        // Afficher un message de fin
+        model.setMessageAbovePlayer("GAME OVER");
+
+        // Ici vous pourriez ajouter une interface de restart ou retour au menu
     }
 
     private void handleItemCollection(int x, int y) {
@@ -236,18 +303,56 @@ public class GameController implements GameModel.GameModelListener {
                 System.out.println("Caméra recentrée sur le personnage");
                 break;
             case "I":
-                // Afficher l'inventaire
                 showInventoryDialog();
                 break;
             case "E":
-                // Afficher l'équipement
                 showEquipmentDialog();
                 break;
             case "P":
-                // Debug - afficher les stats de l'inventaire
                 model.getInventory().printInventoryStats();
                 break;
-            // Ajouter d'autres commandes clavier si nécessaire
+            case "H":
+                // Debug - afficher la santé du joueur
+                CombatSystem.Entity player = model.getCombatSystem().getEntities().stream()
+                        .filter(e -> e.isPlayer)
+                        .findFirst()
+                        .orElse(null);
+                if (player != null) {
+                    System.out.println("💗 Santé du joueur: " + player.stats.health + "/" + player.stats.maxHealth);
+                }
+                break;
+            case "R":
+                // Debug - forcer le respawn d'ennemis
+                model.respawnEnemiesIfNeeded();
+                System.out.println("🔄 Respawn forcé");
+                break;
+            case "K":
+                // Debug - tuer tous les ennemis
+                debugKillAllEnemies();
+                break;
+            case "B":
+                // Debug - spawner un boss
+                model.debugSpawnBoss();
+                System.out.println("👹 Boss de debug spawné!");
+                break;
+            case "V":
+                // Debug - déclencher une invasion
+                model.debugTriggerInvasion();
+                System.out.println("🚨 Invasion de debug déclenchée!");
+                break;
+            case "X":
+                // Debug - nettoyer tous les ennemis
+                model.debugClearAllEnemies();
+                break;
+            case "S":
+                // Debug - afficher les statistiques de combat
+                model.debugPrintCombatStats();
+                printCombatStats();
+                break;
+            case "F1":
+                // Afficher l'aide des commandes
+                printDebugHelp();
+                break;
         }
     }
 
@@ -261,6 +366,58 @@ public class GameController implements GameModel.GameModelListener {
     private void showEquipmentDialog() {
         InventorySystem inventory = model.getInventory();
         inventory.showEquipmentDialog(parentStage);
+    }
+
+    // Méthode de debug pour tuer tous les ennemis
+    private void debugKillAllEnemies() {
+        List<CombatSystem.Entity> entities = model.getCombatSystem().getEntities();
+        int killedCount = 0;
+
+        for (CombatSystem.Entity entity : entities) {
+            if (!entity.isPlayer && entity.stats.isAlive()) {
+                entity.stats.health = 0;
+                killedCount++;
+            }
+        }
+
+        System.out.println("💀 Debug: " + killedCount + " ennemis éliminés");
+        model.setMessageAbovePlayer("Enemies defeated!");
+    }
+
+    // Méthode pour afficher les statistiques de combat
+    private void printCombatStats() {
+        List<CombatSystem.Entity> entities = model.getCombatSystem().getEntities();
+
+        long aliveEnemies = entities.stream()
+                .filter(e -> !e.isPlayer && e.stats.isAlive())
+                .count();
+
+        long totalEnemies = entities.stream()
+                .filter(e -> !e.isPlayer)
+                .count();
+
+        System.out.println("⚔️ Statistiques de combat:");
+        System.out.println("  - Ennemis vivants: " + aliveEnemies);
+        System.out.println("  - Total ennemis: " + totalEnemies);
+        System.out.println("  - Projectiles actifs: " + model.getCombatSystem().getProjectiles().size());
+    }
+
+    // Méthode pour afficher l'aide des commandes de debug
+    private void printDebugHelp() {
+        System.out.println("\n=== Commandes de Debug - Combat ===");
+        System.out.println("C - Recentrer la caméra");
+        System.out.println("I - Afficher l'inventaire");
+        System.out.println("E - Afficher l'équipement");
+        System.out.println("P - Stats de l'inventaire");
+        System.out.println("H - Santé du joueur");
+        System.out.println("R - Forcer le respawn d'ennemis");
+        System.out.println("K - Tuer tous les ennemis");
+        System.out.println("B - Spawner un boss");
+        System.out.println("V - Déclencher une invasion");
+        System.out.println("X - Nettoyer tous les ennemis");
+        System.out.println("S - Statistiques de combat");
+        System.out.println("F1 - Afficher cette aide");
+        System.out.println("=================================\n");
     }
 
     // Implémentation des callbacks du modèle
