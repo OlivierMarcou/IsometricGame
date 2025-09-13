@@ -276,11 +276,17 @@ public class GameController implements GameModel.GameModelListener {
         // Ici vous pourriez ajouter une interface de restart ou retour au menu
     }
 
+
     private void handleItemCollection(int x, int y) {
         List<GameModel.Item> groundItems = model.getGroundItemsAt(x, y);
         if (groundItems.isEmpty()) {
+            model.setMessageAbovePlayer("Nothing here");
             return;
         }
+
+        // CORRECTION : Afficher ce qui est disponible
+        int totalItems = groundItems.stream().mapToInt(item -> item.count).sum();
+        System.out.println("🎒 Tentative de collecte: " + totalItems + " objets disponibles");
 
         boolean success = model.tryCollectItems(x, y);
         if (!success) {
@@ -288,6 +294,7 @@ public class GameController implements GameModel.GameModelListener {
             showInventoryManagementDialog(x, y);
         }
     }
+
 
     private void showInventoryManagementDialog(int x, int y) {
         // Récupérer les objets restants au sol
@@ -357,8 +364,60 @@ public class GameController implements GameModel.GameModelListener {
                 // Afficher l'aide des commandes
                 printDebugHelp();
                 break;
+            case "G":
+                // Debug - afficher objets au sol près du joueur
+                debugShowNearbyGroundItems();
+                break;
+            case "T":
+                // Debug - tester la collecte d'objets
+                debugTestItemCollection();
+                break;
+            case "Y":
+                // Debug - valider l'état des objets au sol
+                model.validateGroundItems();
+                break;
         }
     }
+
+
+
+    private void debugShowNearbyGroundItems() {
+        Point2D playerPos = model.getPlayerPosition();
+        int playerX = (int) playerPos.getX();
+        int playerY = (int) playerPos.getY();
+
+        System.out.println("🔍 Objets au sol près du joueur:");
+        for (int dx = -2; dx <= 2; dx++) {
+            for (int dy = -2; dy <= 2; dy++) {
+                int x = playerX + dx;
+                int y = playerY + dy;
+
+                if (model.isValidTile(x, y)) {
+                    List<GameModel.Item> items = model.getGroundItemsAt(x, y);
+                    if (!items.isEmpty()) {
+                        System.out.println("  Position (" + x + ", " + y + "):");
+                        for (GameModel.Item item : items) {
+                            System.out.println("    - " + item.type + " x" + item.count);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    private void debugTestItemCollection() {
+        Point2D playerPos = model.getPlayerPosition();
+        int x = (int) playerPos.getX();
+        int y = (int) playerPos.getY();
+
+        // Créer des objets de test
+        model.dropItemAt(x + 1, y, "test_potion", 2);
+        model.dropItemAt(x + 1, y, "test_key", 1);
+        model.dropItemAt(x + 1, y, "test_gem", 5);
+
+        System.out.println("🧪 Objets de test créés à (" + (x+1) + ", " + y + ")");
+    }
+
 
     private void showInventoryDialog() {
         InventorySystem inventory = model.getInventory();

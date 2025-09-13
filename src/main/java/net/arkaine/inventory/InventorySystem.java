@@ -49,29 +49,45 @@ public class InventorySystem {
             this.properties = new HashMap<>();
         }
 
+
         public InventoryItem(GameModel.Item gameItem) {
             this.name = gameItem.type;
             this.count = gameItem.count;
-            this.description = "Item trouvé";
             this.properties = new HashMap<>();
 
-            // Déterminer le type selon le nom
-            if (gameItem.type.contains("key")) {
+            // Détection améliorée du type d'objet
+            String itemType = gameItem.type.toLowerCase();
+
+            if (itemType.contains("key")) {
                 this.type = ItemType.KEY;
-            } else if (gameItem.type.contains("potion")) {
+                this.description = "Une clé qui peut ouvrir une porte";
+            } else if (itemType.contains("potion") || itemType.contains("herb") || itemType.contains("berry")) {
                 this.type = ItemType.CONSUMABLE;
-            } else if (gameItem.type.contains("armor")) {
+                this.description = "Peut être consommé pour des effets";
+            } else if (itemType.contains("armor") || itemType.contains("chest")) {
                 this.type = ItemType.ARMOR;
-            } else if (gameItem.type.contains("helmet")) {
+                this.description = "Protection pour le corps";
+            } else if (itemType.contains("helmet") || itemType.contains("hat")) {
                 this.type = ItemType.HELMET;
-            } else if (gameItem.type.contains("sword") || gameItem.type.contains("weapon")) {
+                this.description = "Protection pour la tête";
+            } else if (itemType.contains("sword") || itemType.contains("weapon") || itemType.contains("bow")) {
                 this.type = ItemType.WEAPON;
-            } else if (gameItem.type.contains("ring")) {
+                this.description = "Arme de combat";
+            } else if (itemType.contains("ring")) {
                 this.type = ItemType.RING;
+                this.description = "Bijou magique";
+            } else if (itemType.contains("gem") || itemType.contains("treasure") || itemType.contains("coin")) {
+                this.type = ItemType.TREASURE;
+                this.description = "Objet de valeur (" + gameItem.count + ")";
+            } else if (itemType.contains("trophy") || itemType.contains("scroll") || itemType.contains("legendary")) {
+                this.type = ItemType.MISC;
+                this.description = "Objet spécial rare";
             } else {
                 this.type = ItemType.MISC;
+                this.description = "Objet divers";
             }
         }
+
 
         public boolean canEquipIn(EquipmentSlot slot) {
             switch (slot) {
@@ -149,6 +165,7 @@ public class InventorySystem {
     // Gestion des objets
     public boolean addItem(InventoryItem item) {
         if (isBackpackFull()) {
+            System.out.println("❌ Sac plein: impossible d'ajouter " + item.name);
             return false;
         }
 
@@ -156,6 +173,7 @@ public class InventorySystem {
         for (InventoryItem existing : backpack) {
             if (existing.name.equals(item.name) && existing.type == item.type) {
                 existing.count += item.count;
+                System.out.println("🔄 Objets fusionnés: " + item.name + " (maintenant x" + existing.count + ")");
                 notifyInventoryChanged();
                 return true;
             }
@@ -163,6 +181,7 @@ public class InventorySystem {
 
         // Ajouter comme nouvel objet
         backpack.add(item);
+        System.out.println("✅ Ajouté à l'inventaire: " + item.name + " x" + item.count);
         notifyInventoryChanged();
         return true;
     }
@@ -249,6 +268,7 @@ public class InventorySystem {
     }
 
     // Interface graphique de gestion d'inventaire
+
     public void showInventoryManagementDialog(List<InventoryItem> itemsToCollect, Stage parentStage) {
         Stage dialog = new Stage();
         dialog.initModality(Modality.APPLICATION_MODAL);
@@ -257,9 +277,38 @@ public class InventorySystem {
 
         BorderPane root = new BorderPane();
 
-        // Créer les listes
+        // Créer les listes avec handlers améliorés
         ListView<InventoryItem> inventoryList = createInventoryListView();
         ListView<InventoryItem> itemsToCollectList = createItemsToCollectListView(itemsToCollect);
+
+        // CORRECTION : Synchronisation en temps réel des listes
+        inventoryList.setOnMouseClicked(e -> {
+            if (e.getClickCount() == 2 && e.getButton() == MouseButton.PRIMARY) {
+                InventoryItem selected = inventoryList.getSelectionModel().getSelectedItem();
+                if (selected != null) {
+                    // Jeter l'objet et l'ajouter à la liste de collecte
+                    if (removeItem(selected, 1)) {
+                        itemsToCollectList.getItems().add(selected);
+                        inventoryList.getItems().remove(selected);
+                        System.out.println("Objet jeté: " + selected.name);
+                    }
+                }
+            }
+        });
+
+        itemsToCollectList.setOnMouseClicked(e -> {
+            if (e.getClickCount() == 2 && e.getButton() == MouseButton.PRIMARY) {
+                InventoryItem selected = itemsToCollectList.getSelectionModel().getSelectedItem();
+                if (selected != null && !isBackpackFull()) {
+                    // Ramasser l'objet
+                    if (addItem(selected)) {
+                        inventoryList.getItems().add(selected);
+                        itemsToCollectList.getItems().remove(selected);
+                        System.out.println("Objet ramassé: " + selected.name);
+                    }
+                }
+            }
+        });
 
         // Panneaux gauche et droite
         VBox leftPanel = createPanelWithTitle("Inventaire actuel (" + backpack.size() + "/" + MAX_BACKPACK_SIZE + ")", inventoryList);
@@ -386,20 +435,37 @@ public class InventorySystem {
 
     // Méthodes utilitaires
     public void printInventoryStats() {
-        System.out.println("=== Inventaire ===");
-        System.out.println("Sac à dos: " + backpack.size() + "/" + MAX_BACKPACK_SIZE);
+        System.out.println("=== État de l'Inventaire ===");
+        System.out.println("📦 Sac à dos: " + backpack.size() + "/" + MAX_BACKPACK_SIZE);
 
         if (!backpack.isEmpty()) {
-            System.out.println("Objets dans le sac:");
+            System.out.println("🎒 Contenu du sac:");
+            Map<ItemType, Integer> typeStats = new HashMap<>();
+
             for (InventoryItem item : backpack) {
-                System.out.println("  - " + item);
+                System.out.println("  - " + item.name + " x" + item.count + " (" + item.type + ")");
+                typeStats.put(item.type, typeStats.getOrDefault(item.type, 0) + item.count);
+            }
+
+            System.out.println("📊 Par catégorie:");
+            typeStats.forEach((type, count) ->
+                    System.out.println("  " + type + ": " + count + " objets"));
+        }
+
+        System.out.println("⚔️ Équipement:");
+        boolean hasEquipment = false;
+        for (EquipmentSlot slot : EquipmentSlot.values()) {
+            InventoryItem item = equipment.get(slot);
+            if (item != null) {
+                System.out.println("  " + slot.name().replace("_", " ") + ": " + item.name);
+                hasEquipment = true;
             }
         }
 
-        System.out.println("Équipement:");
-        for (EquipmentSlot slot : EquipmentSlot.values()) {
-            InventoryItem item = equipment.get(slot);
-            System.out.println("  " + slot.name() + ": " + (item != null ? item.toString() : "Vide"));
+        if (!hasEquipment) {
+            System.out.println("  (Aucun équipement)");
         }
+
+        System.out.println("===============================");
     }
 }

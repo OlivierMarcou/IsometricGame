@@ -162,38 +162,40 @@ public class GameModel {
 
     // Logique métier
     public boolean loadMapFromJson() {
-        try {
-            InputStream stream = getClass().getResourceAsStream("/village_map.json");
-            if (stream == null) {
-                System.out.println("village_map.json non trouvé, génération d'une carte par défaut");
-                generateDefaultMap();
-                return false;
-            }
-
-            StringBuilder json = new StringBuilder();
-            BufferedReader reader = new BufferedReader(new InputStreamReader(stream));
-            String line;
-            while ((line = reader.readLine()) != null) {
-                json.append(line).append("\n");
-            }
-            reader.close();
-
-            boolean success = parseJson(json.toString());
-            if (success) {
-                initializeWallProperties();
-
-                // Générer les ennemis après le chargement de la carte
-                spawnInitialEnemies();
-
-                notifyMapLoaded();
-            }
-            return success;
-
-        } catch (Exception e) {
-            System.err.println("Erreur chargement JSON: " + e.getMessage());
-            generateDefaultMap();
-            return false;
-        }
+        generateDefaultMap();return true;
+//
+//        try {
+//            InputStream stream = getClass().getResourceAsStream("/village_map.json");
+//            if (stream == null) {
+//                System.out.println("village_map.json non trouvé, génération d'une carte par défaut");
+//                generateDefaultMap();
+//                return false;
+//            }
+//
+//            StringBuilder json = new StringBuilder();
+//            BufferedReader reader = new BufferedReader(new InputStreamReader(stream));
+//            String line;
+//            while ((line = reader.readLine()) != null) {
+//                json.append(line).append("\n");
+//            }
+//            reader.close();
+//
+//            boolean success = parseJson(json.toString());
+//            if (success) {
+//                initializeWallProperties();
+//
+//                // Générer les ennemis après le chargement de la carte
+//                spawnInitialEnemies();
+//
+//                notifyMapLoaded();
+//            }
+//            return success;
+//
+//        } catch (Exception e) {
+//            System.err.println("Erreur chargement JSON: " + e.getMessage());
+//            generateDefaultMap();
+//            return false;
+//        }
     }
 
     private boolean parseJson(String json) {
@@ -832,9 +834,12 @@ public class GameModel {
         return true;
     }
 
+
+
     public boolean tryCollectItems(int x, int y) {
         if (!isValidTile(x, y)) return false;
 
+        // Vérifier la distance
         double distance = Math.abs(x - playerPosition.getX()) + Math.abs(y - playerPosition.getY());
         if (distance > 1.5) {
             setMessageAbovePlayer("Too far");
@@ -843,49 +848,100 @@ public class GameModel {
 
         List<Item> groundItems = itemMap[x][y];
         if (groundItems.isEmpty()) {
+            setMessageAbovePlayer("Nothing here");
             return false;
         }
 
-        List<InventorySystem.InventoryItem> itemsToCollect = new ArrayList<>();
+        System.out.println("🎒 Tentative de collecte de " + groundItems.size() + " types d'objets");
+
+        // Collecter objet par objet avec gestion fine
+        List<Item> toRemove = new ArrayList<>();
+        int collectedCount = 0;
+        int totalAttempts = 0;
+
         for (Item gameItem : groundItems) {
-            itemsToCollect.add(new InventorySystem.InventoryItem(gameItem));
-        }
+            totalAttempts++;
+            InventorySystem.InventoryItem invItem = new InventorySystem.InventoryItem(gameItem);
 
-        boolean collectedAll = true;
-        List<InventorySystem.InventoryItem> remaining = new ArrayList<>();
-
-        for (InventorySystem.InventoryItem invItem : itemsToCollect) {
-            if (!inventory.addItem(invItem)) {
-                remaining.add(invItem);
-                collectedAll = false;
+            if (inventory.addItem(invItem)) {
+                toRemove.add(gameItem);
+                collectedCount++;
+                System.out.println("✅ Collecté: " + gameItem.type + " x" + gameItem.count);
+            } else {
+                System.out.println("❌ Inventaire plein pour: " + gameItem.type);
+                break; // Arrêter dès que l'inventaire est plein
             }
         }
 
-        if (collectedAll) {
-            groundItems.clear();
-            setMessageAbovePlayer("Items collected");
-            System.out.println("Tous les objets ont été ramassés");
-            return true;
-        } else {
-            setMessageAbovePlayer("Inventory full");
-            System.out.println("Inventaire plein - " + remaining.size() + " objets non ramassés");
-            return false;
+        // Supprimer les objets collectés
+        groundItems.removeAll(toRemove);
+
+        // Messages et retours appropriés
+        if (collectedCount > 0) {
+            if (collectedCount == totalAttempts) {
+                setMessageAbovePlayer("All collected (" + collectedCount + ")");
+            } else {
+                setMessageAbovePlayer("Collected " + collectedCount + "/" + totalAttempts);
+            }
         }
+
+        // Retourner false si inventaire plein pour déclencher l'interface
+        boolean inventoryFull = (collectedCount < totalAttempts) && !groundItems.isEmpty();
+        if (inventoryFull) {
+            setMessageAbovePlayer("Inventory full!");
+        }
+
+        return !inventoryFull;
     }
+
 
     public List<Item> getGroundItemsAt(int x, int y) {
         if (!isValidTile(x, y)) return new ArrayList<>();
         return new ArrayList<>(itemMap[x][y]);
     }
 
-    public void dropItemAt(int x, int y, String itemName, int count) {
-        if (!isValidTile(x, y)) return;
 
+
+    public boolean dropItemAt(int x, int y, String itemName, int count) {
+        if (!isValidTile(x, y)) {
+            System.out.println("❌ Position invalide: (" + x + ", " + y + ")");
+            return false;
+        }
+
+        // Vérifier si on peut jeter des objets ici
+        if (wallMap[x][y] != -1 && !canWalkThrough(x, y)) {
+            System.out.println("❌ Impossible de jeter sur un obstacle");
+            return false;
+        }
+
+        // Limiter les objets par case
+        List<Item> currentItems = itemMap[x][y];
+        if (currentItems.size() >= 15) {
+            System.out.println("❌ Trop d'objets sur cette case (" + currentItems.size() + "/15)");
+            return false;
+        }
+
+        // Vérifier si on peut fusionner avec un objet existant
+        for (Item existingItem : currentItems) {
+            if (existingItem.type.equals(itemName)) {
+                // Créer un nouvel objet fusionné et remplacer l'ancien
+                Item mergedItem = new Item(itemName, existingItem.count + count);
+                currentItems.remove(existingItem);
+                currentItems.add(mergedItem);
+                System.out.println("🔄 Objets fusionnés: " + itemName + " (maintenant x" + mergedItem.count + ")");
+                return true;
+            }
+        }
+
+        // Ajouter comme nouvel objet
         Item droppedItem = new Item(itemName, count);
-        itemMap[x][y].add(droppedItem);
+        currentItems.add(droppedItem);
 
-        System.out.println("Objet jeté au sol: " + itemName + " (" + count + ")");
+        System.out.println("📦 Objet jeté: " + itemName + " x" + count + " à (" + x + ", " + y + ")");
+        return true;
     }
+
+
 
     // ================================
     // GESTION DU MOUVEMENT
@@ -954,6 +1010,82 @@ public class GameModel {
         return true;
     }
 
+
+    public void validateGroundItems() {
+        int totalGroundItems = 0;
+        int totalStacks = 0;
+        int invalidPositions = 0;
+        int overworldPositions = 0;
+        Map<String, Integer> itemTypeStats = new HashMap<>();
+
+        System.out.println("🔍 Validation des objets au sol...");
+
+        for (int x = 0; x < MAP_SIZE; x++) {
+            for (int y = 0; y < MAP_SIZE; y++) {
+                List<Item> items = itemMap[x][y];
+                if (!items.isEmpty()) {
+                    totalStacks++;
+
+                    for (Item item : items) {
+                        totalGroundItems += item.count;
+                        itemTypeStats.put(item.type,
+                                itemTypeStats.getOrDefault(item.type, 0) + item.count);
+                    }
+
+                    // Vérifications
+                    if (!isValidTile(x, y)) {
+                        invalidPositions++;
+                        System.out.println("⚠️ Position invalide: (" + x + ", " + y + ") avec " + items.size() + " objets");
+                    }
+
+                    if (items.size() > 10) {
+                        overworldPositions++;
+                        System.out.println("⚠️ Surcharge: (" + x + ", " + y + ") avec " + items.size() + " types d'objets");
+                    }
+                }
+            }
+        }
+
+        System.out.println("📊 Rapport de validation:");
+        System.out.println("  📦 Total objets au sol: " + totalGroundItems);
+        System.out.println("  📍 Positions avec objets: " + totalStacks);
+        System.out.println("  ❌ Positions invalides: " + invalidPositions);
+        System.out.println("  ⚠️ Positions surchargées: " + overworldPositions);
+
+        System.out.println("  🏷️ Répartition par type:");
+        itemTypeStats.entrySet().stream()
+                .sorted((a, b) -> b.getValue().compareTo(a.getValue()))
+                .limit(10)
+                .forEach(entry ->
+                        System.out.println("    " + entry.getKey() + ": " + entry.getValue()));
+    }
+
+    public void cleanupGroundItems() {
+        int removed = 0;
+
+        for (int x = 0; x < MAP_SIZE; x++) {
+            for (int y = 0; y < MAP_SIZE; y++) {
+                List<Item> items = itemMap[x][y];
+
+                // Supprimer les objets en position invalide
+                if (!isValidTile(x, y) && !items.isEmpty()) {
+                    removed += items.size();
+                    items.clear();
+                }
+
+                // Limiter à 10 types d'objets par case
+                if (items.size() > 10) {
+                    int excess = items.size() - 10;
+                    for (int i = 0; i < excess; i++) {
+                        items.remove(items.size() - 1);
+                    }
+                    removed += excess;
+                }
+            }
+        }
+
+        System.out.println("🧹 Nettoyage terminé: " + removed + " objets supprimés");
+    }
 
     public Point2D getCurrentInterpolatedPosition() {
         if (!isMoving || currentPathIndex >= currentPath.size()) {
