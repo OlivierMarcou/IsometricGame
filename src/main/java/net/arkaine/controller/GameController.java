@@ -11,6 +11,8 @@ import javafx.scene.input.MouseButton;
 import javafx.scene.input.MouseEvent;
 import javafx.stage.Stage;
 import javafx.util.Duration;
+import net.arkaine.world.ChestSystemIntegration;
+import net.arkaine.world.RealisticItemGenerator;
 
 import java.util.*;
 
@@ -19,6 +21,7 @@ import java.util.*;
  */
 public class GameController implements GameModel.GameModelListener {
 
+    private ChestSystemIntegration chestSystem;
     private GameModel model;
     private GameView view;
     private Stage parentStage; // Pour les dialogues
@@ -45,6 +48,15 @@ public class GameController implements GameModel.GameModelListener {
 
         // Initialiser la vue
         initializeView();
+
+        // NOUVEAU : Initialiser le système de coffres
+        initializeChestSystem();
+    }
+
+    private void initializeChestSystem() {
+        this.chestSystem = new ChestSystemIntegration(model);
+        this.chestSystem.integrateChestSystem();
+        System.out.println("✅ Système de coffres initialisé");
     }
 
     private void setupViewEvents() {
@@ -84,20 +96,36 @@ public class GameController implements GameModel.GameModelListener {
         if (clickedTile != null && model.isValidTile((int)clickedTile.getX(), (int)clickedTile.getY())) {
 
             if (e.getButton() == MouseButton.PRIMARY) {
-                // Vérifier s'il y a un ennemi à cette position pour l'attaquer
-                if (isEnemyAtPosition(clickedTile)) {
-                    // NOUVEAU : Arrêter le mouvement avant d'attaquer
+                // 1. Vérifier d'abord s'il y a un coffre
+                if (chestSystem.hasChestAt((int)clickedTile.getX(), (int)clickedTile.getY())) {
+                    handleChestInteraction((int)clickedTile.getX(), (int)clickedTile.getY());
+                }
+                // 2. Puis vérifier les ennemis
+                else if (isEnemyAtPosition(clickedTile)) {
                     model.stopMovement();
                     model.playerAttack(clickedTile);
-                } else {
-                    // CORRECTION : Toujours permettre le déplacement
-                    // (plus de vérification de model.isMoving())
+                }
+                // 3. Enfin, gérer le déplacement
+                else {
                     handleMovementRequest(clickedTile);
                 }
             } else if (e.getButton() == MouseButton.SECONDARY) {
-                // Clic droit - ramasser des objets
-                handleItemCollection((int)clickedTile.getX(), (int)clickedTile.getY());
+                // Clic droit - priorité aux coffres, puis aux objets
+                if (chestSystem.hasChestAt((int)clickedTile.getX(), (int)clickedTile.getY())) {
+                    handleChestInteraction((int)clickedTile.getX(), (int)clickedTile.getY());
+                } else {
+                    handleItemCollection((int)clickedTile.getX(), (int)clickedTile.getY());
+                }
             }
+        }
+    }
+
+    private void handleChestInteraction(int x, int y) {
+        boolean success = chestSystem.handleChestInteraction(x, y, parentStage);
+
+        if (!success) {
+            // Si ce n'est pas un coffre, essayer l'interaction avec porte
+            handleDoorInteraction(x, y);
         }
     }
 
@@ -135,6 +163,33 @@ public class GameController implements GameModel.GameModelListener {
         }
 
         return false;
+    }
+
+    private void debugSpawnChestNearPlayer() {
+        Point2D playerPos = model.getPlayerPosition();
+
+        // Chercher une position libre près du joueur
+        for (int dx = -2; dx <= 2; dx++) {
+            for (int dy = -2; dy <= 2; dy++) {
+                int x = (int)playerPos.getX() + dx;
+                int y = (int)playerPos.getY() + dy;
+
+                if (model.isValidTile(x, y) &&
+                        model.canWalkThrough(x, y) &&
+                        chestSystem != null &&
+                        !chestSystem.hasChestAt(x, y) &&
+                        model.getItemMap()[x][y].isEmpty()) {
+
+                    chestSystem.debugSpawnChest(x, y);
+                    model.setMessageAbovePlayer("Chest spawned!");
+                    System.out.println("📦 Coffre de debug spawné en (" + x + ", " + y + ")");
+                    return;
+                }
+            }
+        }
+
+        model.setMessageAbovePlayer("No space for chest!");
+        System.out.println("❌ Pas de place pour un coffre près du joueur");
     }
 
     // Algorithme A* pour le pathfinding avec diagonales
@@ -306,9 +361,11 @@ public class GameController implements GameModel.GameModelListener {
         // Afficher l'interface de gestion
         model.getInventory().showInventoryManagementDialog(itemsToCollect, parentStage);
     }
-
     public void handleKeyPressed(String keyCode) {
         switch (keyCode) {
+            // ================================
+            // CONTRÔLES DE BASE (EXISTANTS)
+            // ================================
             case "C":
                 view.centerCameraOnPlayer(model);
                 System.out.println("Caméra recentrée sur le personnage");
@@ -322,6 +379,10 @@ public class GameController implements GameModel.GameModelListener {
             case "P":
                 model.getInventory().printInventoryStats();
                 break;
+
+            // ================================
+            // SYSTÈME DE COMBAT (EXISTANTS)
+            // ================================
             case "H":
                 // Debug - afficher la santé du joueur
                 CombatSystem.Entity player = model.getCombatSystem().getEntities().stream()
@@ -360,21 +421,73 @@ public class GameController implements GameModel.GameModelListener {
                 model.debugPrintCombatStats();
                 printCombatStats();
                 break;
-            case "F1":
-                // Afficher l'aide des commandes
-                printDebugHelp();
-                break;
-            case "G":
-                // Debug - afficher objets au sol près du joueur
-                debugShowNearbyGroundItems();
-                break;
+
+            // ================================
+            // NOUVEAUX : COFFRES ET ITEMS
+            // ================================
             case "T":
-                // Debug - tester la collecte d'objets
-                debugTestItemCollection();
+                // Debug - spawner un coffre aléatoire près du joueur
+                debugSpawnChestNearPlayer();
                 break;
+
             case "Y":
-                // Debug - valider l'état des objets au sol
-                model.validateGroundItems();
+                // Debug - déverrouiller tous les coffres
+                if (chestSystem != null) {
+                    chestSystem.debugUnlockAllChests();
+                    model.setMessageAbovePlayer("Chests unlocked!");
+                    System.out.println("🔓 Tous les coffres déverrouillés");
+                }
+                break;
+
+            case "U":
+                // Debug - remplir un coffre aléatoire d'items rares
+                if (chestSystem != null) {
+                    chestSystem.debugFillRandomChest();
+                    model.setMessageAbovePlayer("Chest filled!");
+                }
+                break;
+
+            case "O":
+                // Debug - afficher les statistiques des coffres
+                if (chestSystem != null) {
+                    chestSystem.printChestStatistics();
+                    printWorldStatistics();
+                }
+                break;
+
+            case "L":
+                // Debug - lister tous les items disponibles
+                RealisticItemGenerator.printItemDatabase();
+                break;
+
+            case "M":
+                // Debug - tester la génération d'items
+                RealisticItemGenerator.testItemGeneration();
+                model.setMessageAbovePlayer("Test completed!");
+                break;
+
+            case "N":
+                // Debug - régénérer tous les items et coffres
+                regenerateItemsAndChests();
+                break;
+
+            case "J":
+                // Debug - créer une salle au trésor
+                Point2D playerPos = model.getPlayerPosition();
+                createTreasureRoom((int)playerPos.getX() + 5, (int)playerPos.getY() + 5, 3);
+                break;
+
+            // ================================
+            // AIDE ET INFORMATIONS
+            // ================================
+            case "F1":
+                // Afficher l'aide étendue avec les nouvelles commandes
+                printExtendedDebugHelp();
+                break;
+
+            case "F2":
+                // Statistiques complètes du monde
+                printWorldStatistics();
                 break;
         }
     }
@@ -466,12 +579,16 @@ public class GameController implements GameModel.GameModelListener {
     }
 
     // Méthode pour afficher l'aide des commandes de debug
-    private void printDebugHelp() {
-        System.out.println("\n=== Commandes de Debug - Combat ===");
+
+    private void printExtendedDebugHelp() {
+        System.out.println("\n=== Commandes de Debug Étendues ===");
+        System.out.println("CONTRÔLES DE BASE:");
         System.out.println("C - Recentrer la caméra");
         System.out.println("I - Afficher l'inventaire");
         System.out.println("E - Afficher l'équipement");
         System.out.println("P - Stats de l'inventaire");
+        System.out.println();
+        System.out.println("COMBAT:");
         System.out.println("H - Santé du joueur");
         System.out.println("R - Forcer le respawn d'ennemis");
         System.out.println("K - Tuer tous les ennemis");
@@ -479,8 +596,22 @@ public class GameController implements GameModel.GameModelListener {
         System.out.println("V - Déclencher une invasion");
         System.out.println("X - Nettoyer tous les ennemis");
         System.out.println("S - Statistiques de combat");
-        System.out.println("F1 - Afficher cette aide");
-        System.out.println("=================================\n");
+        System.out.println();
+        System.out.println("COFFRES ET ITEMS:");
+        System.out.println("T - Spawner un coffre près du joueur");
+        System.out.println("Y - Déverrouiller tous les coffres");
+        System.out.println("U - Remplir un coffre d'items rares");
+        System.out.println("O - Statistiques des coffres");
+        System.out.println("L - Lister la base de données d'items");
+        System.out.println("M - Tester la génération d'items");
+        System.out.println("N - Régénérer tous les items et coffres");
+        System.out.println("J - Créer une salle au trésor");
+        System.out.println();
+        System.out.println("AIDE:");
+        System.out.println("F1 - Aide de base");
+        System.out.println("F2 - Cette aide étendue");
+        System.out.println("F3 - Statistiques complètes");
+        System.out.println("=====================================\n");
     }
 
     // Implémentation des callbacks du modèle
@@ -572,4 +703,140 @@ public class GameController implements GameModel.GameModelListener {
             return Double.compare(this.getF(), other.getF());
         }
     }
+
+    public static GameController createWithChestSystem(GameModel model, GameView view, Stage parentStage) {
+        GameController controller = new GameController(model, view, parentStage);
+
+        // Initialiser le système de coffres
+        ChestSystemIntegration chestSystem = new ChestSystemIntegration(model);
+        chestSystem.integrateChestSystem();
+
+        // Ici on devrait ajouter chestSystem au controller
+        // (nécessite une modification de la classe GameController existante)
+
+        System.out.println("🎮 GameController créé avec système de coffres");
+
+        return controller;
+    }
+
+    // Getters pour accéder au système de coffres depuis d'autres classes
+    public ChestSystemIntegration getChestSystem() {
+        return chestSystem;
+    }
+
+    // Méthode pour régénérer les items et coffres
+    private void regenerateItemsAndChests() {
+        System.out.println("🔄 Régénération complète des items et coffres...");
+
+        // Nettoyer les anciens items
+        for (int x = 0; x < GameModel.MAP_SIZE; x++) {
+            for (int y = 0; y < GameModel.MAP_SIZE; y++) {
+                model.getItemMap()[x][y].clear();
+            }
+        }
+
+        // Régénérer avec le système réaliste
+        if (chestSystem != null) {
+            chestSystem = new ChestSystemIntegration(model);
+            chestSystem.integrateChestSystem();
+        }
+
+        model.setMessageAbovePlayer("World refreshed!");
+        System.out.println("✅ Régénération terminée");
+    }
+
+    // Méthode pour sauvegarder l'état des coffres (extension future)
+    public void saveChestState() {
+        // TODO: Implémenter la sauvegarde des coffres ouverts/fermés
+        System.out.println("💾 Sauvegarde de l'état des coffres (TODO)");
+    }
+
+    // Méthode pour charger l'état des coffres (extension future)
+    public void loadChestState() {
+        // TODO: Implémenter le chargement de l'état des coffres
+        System.out.println("📁 Chargement de l'état des coffres (TODO)");
+    }
+
+    private void printWorldStatistics() {
+        System.out.println("=== Statistiques Complètes du Monde ===");
+
+        // Stats des coffres
+        if (chestSystem != null) {
+            chestSystem.printChestStatistics();
+        }
+
+        // Stats des items au sol
+        Map<String, Integer> groundItems = new HashMap<>();
+        int totalGroundItems = 0;
+
+        for (int x = 0; x < GameModel.MAP_SIZE; x++) {
+            for (int y = 0; y < GameModel.MAP_SIZE; y++) {
+                for (GameModel.Item item : model.getItemMap()[x][y]) {
+                    if (!item.type.startsWith("chest_")) { // Exclure les indicateurs de coffres
+                        groundItems.put(item.type, groundItems.getOrDefault(item.type, 0) + item.count);
+                        totalGroundItems += item.count;
+                    }
+                }
+            }
+        }
+
+        System.out.println("\n=== Items au Sol ===");
+        System.out.println("Total d'items au sol : " + totalGroundItems);
+        System.out.println("Types d'items différents : " + groundItems.size());
+
+        groundItems.entrySet().stream()
+                .sorted((a, b) -> b.getValue().compareTo(a.getValue()))
+                .limit(10) // Top 10
+                .forEach(entry -> {
+                    RealisticItemGenerator.ItemDefinition def = RealisticItemGenerator.getItemDefinition(entry.getKey());
+                    String rarity = def != null ? def.rarity.displayName : "Inconnu";
+                    System.out.println("  " + entry.getKey() + " : " + entry.getValue() + " (" + rarity + ")");
+                });
+
+        // Stats des ennemis
+        System.out.println("\n=== Combat ===");
+        printCombatStats();
+
+        System.out.println("======================================");
+    }
+
+    private void createTreasureRoom(int centerX, int centerY, int radius) {
+        System.out.println("💰 Création d'une salle au trésor en (" + centerX + ", " + centerY + ")");
+
+        if (chestSystem == null) {
+            System.out.println("❌ Système de coffres non initialisé");
+            return;
+        }
+
+        // Placer plusieurs coffres précieux
+        for (int i = 0; i < 3; i++) {
+            int x = centerX + (int)(Math.random() * radius * 2) - radius;
+            int y = centerY + (int)(Math.random() * radius * 2) - radius;
+
+            if (model.isValidTile(x, y) && model.canWalkThrough(x, y)) {
+                RealisticItemGenerator.ChestType treasureType =
+                        Math.random() < 0.5 ?
+                                RealisticItemGenerator.ChestType.TREASURE_CHEST :
+                                RealisticItemGenerator.ChestType.LEGENDARY_CHEST;
+
+                chestSystem.spawnChestAt(x, y, treasureType);
+            }
+        }
+
+        // Ajouter quelques items rares au sol
+        String[] rareItems = {"ruby", "diamond", "flame_sword", "magic_ring"};
+        for (int i = 0; i < 5; i++) {
+            int x = centerX + (int)(Math.random() * radius * 2) - radius;
+            int y = centerY + (int)(Math.random() * radius * 2) - radius;
+
+            if (model.isValidTile(x, y) && model.canWalkThrough(x, y)) {
+                String itemId = rareItems[(int)(Math.random() * rareItems.length)];
+                RealisticItemGenerator.spawnItemAt(model, x, y, itemId, 1);
+            }
+        }
+
+        model.setMessageAbovePlayer("Treasure room created!");
+        System.out.println("✅ Salle au trésor créée");
+    }
+
 }

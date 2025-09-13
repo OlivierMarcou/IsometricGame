@@ -18,6 +18,19 @@ public class GameModel {
 
     public static final int MAP_SIZE = 50;
 
+    public enum ItemType {
+        CONSUMABLE,    // Potions, nourriture
+        WEAPON,        // Armes
+        ARMOR,         // Armures corps
+        HELMET,        // Casques
+        PANTS,         // Pantalons
+        BELT,          // Ceintures
+        RING,          // Bagues
+        CLOTHING,      // Vêtements
+        TREASURE,      // Objets de valeur
+        KEY,           // Clés
+        MISC           // Divers
+    }
     // Données de la carte
     private int[][] floorMap = new int[MAP_SIZE][MAP_SIZE];
     private int[][] wallMap = new int[MAP_SIZE][MAP_SIZE];
